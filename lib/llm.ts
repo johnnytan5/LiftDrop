@@ -12,7 +12,12 @@ export type ToolDef = {
   function: { name: string; description: string; parameters: Record<string, unknown> };
 };
 
-export const llmConfigured = () => !!process.env.LLM_API_KEY;
+const base = () => process.env.LLM_BASE_URL ?? 'https://api.meta.ai/v1';
+const isOpenRouter = () => base().includes('openrouter.ai');
+// OpenRouter uses its own key so switching provider is just LLM_BASE_URL + LLM_MODEL.
+const apiKey = () => (isOpenRouter() ? process.env.OPENROUTER_API_KEY : process.env.LLM_API_KEY);
+
+export const llmConfigured = () => !!apiKey();
 
 export async function chat(opts: {
   messages: ChatMessage[];
@@ -20,17 +25,17 @@ export async function chat(opts: {
   maxTokens?: number;
   timeoutMs?: number;
 }): Promise<AssistantMessage> {
-  const base = process.env.LLM_BASE_URL ?? 'https://api.meta.ai/v1';
-  const res = await fetch(`${base}/chat/completions`, {
+  const res = await fetch(`${base()}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.LLM_API_KEY}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey()}` },
     body: JSON.stringify({
       model: process.env.LLM_MODEL ?? 'muse-spark-1.1',
       messages: opts.messages,
       ...(opts.tools?.length ? { tools: opts.tools } : {}),
       ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
-      // Muse-specific; OpenRouter ignores it. Keeps the handoff decision fast.
-      ...(base.includes('meta.ai') ? { reasoning_effort: 'minimal' } : {}),
+      // Low reasoning keeps the handoff fast: gpt-6-luna ~2 s at minimal vs ~5 s default;
+      // Muse still reasons 500-900 tokens (~4-6 s) even at minimal.
+      ...(isOpenRouter() ? { reasoning: { effort: 'minimal' } } : { reasoning_effort: 'minimal' }),
     }),
     signal: AbortSignal.timeout(opts.timeoutMs ?? 8000),
   });

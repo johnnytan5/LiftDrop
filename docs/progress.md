@@ -18,12 +18,15 @@
 - [x] Supabase project `duovflifoomrfqpqzpet`: migration applied, `lib/db.ts` uses supabase-js when `SUPABASE_URL` is set (mock otherwise); partial-capture lifecycle verified end to end (2026-10-31)
 - [ ] Realtime subscriptions instead of 1 s polling
 - [ ] Cut per-event Supabase round trips (~1.1 s/event now)
-- [ ] PayPal sandbox: `PAYPAL_MODE=sandbox`, client id/secret, shop payout emails; check `final_capture` releases the rest; enable Payouts
+- [x] PayPal sandbox spike: authorize → capture $4.50 of $13.50 with `final_capture` (rest released, 2nd capture rejected), idempotent retry, payout SUCCESS in ~20 s (2026-11-01)
+- [x] Operator moved to a US business account + new app (MY account held MYR, payouts in USD failed)
+- [ ] Re-run hold + partial capture on the new US operator app, then set `PAYPAL_MODE=sandbox`
+- [ ] Payout lands ~20 s after batch creation: show `paid_out` as pending until polled SUCCESS
 - [x] LLM key set (Muse Spark replies in ~1.8 s)
 - [x] Handoff agent verified on the ambiguous case via Muse (wait, then charge A only)
 - [x] Clean handoffs decided by code instantly (source `code`); only ambiguous ones call the agent (~4–6 s on Muse)
 - [ ] Show "Verifying handoff…" on the order page while the agent decides
-- [ ] Benchmark OpenRouter gpt-6-luna vs Muse (needs OPENROUTER key in .env)
+- [x] LLM switched to OpenRouter `openai/gpt-6-luna` with reasoning effort minimal: ~1.6–2.4 s per decision vs Muse 4–8 s; correct on the ambiguous case
 - [ ] Devpost pages (needs Claude in Chrome connected)
 
 ## Next (no credentials needed)

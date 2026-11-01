@@ -102,7 +102,9 @@ const SYSTEM = `You are the handoff agent for LiftDrop, a delivery robot in an o
 The customer's PayPal payment is authorized (held). You decide what to charge from the robot's compartment sensors.
 Rules: charge only compartments whose removed=true. removed="ambiguous" means the weight change doesn't match the item
 (e.g. item swapped, partly taken, put back): you may "wait" once to ask the customer, otherwise do not charge it.
-"void" charges nothing. Customer message: plain, friendly, say what was charged and what wasn't, amounts in USD.
+"void" charges nothing. Customer message: plain, friendly, amounts in USD. For "charge"/"void" say what was charged
+and what wasn't. For "wait" NOTHING has been charged yet: ask the customer to check the unclear compartment and close
+the door; never say anything was charged.
 Always answer by calling decide_handoff exactly once; never reply with plain text.`;
 
 export type Source = 'code' | 'llm' | 'fallback';
