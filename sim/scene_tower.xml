@@ -15,6 +15,7 @@
   <compiler autolimits="true"/>
   <option timestep="0.002"/>
   <visual>
+    <global offwidth="1280" offheight="720"/>
     <headlight ambient="0.35 0.35 0.35" diffuse="0.5 0.5 0.5"/>
   </visual>
 
@@ -72,21 +73,27 @@
     <!-- Robot dock -->
     <geom class="decor" pos="1 -2 0.002" size="0.35 0.35 0.002" rgba="0.1 0.45 0.85 1"/>
 
-    <!-- ===== Lift shaft: x 3.75..5.25, y -0.75..0.75, open on the west (-x) side ===== -->
-    <geom class="decor" pos="4.5 0.8 3.4" size="0.8 0.05 3.4" material="steel"/>
-    <geom class="decor" pos="4.5 -0.8 3.4" size="0.8 0.05 3.4" material="steel"/>
-    <geom class="decor" pos="5.3 0 3.4" size="0.05 0.8 3.4" material="steel"/>
-    <!-- lobby door frame -->
-    <geom class="decor" pos="3.72 0.72 1.1" size="0.04 0.08 1.1" material="steel"/>
-    <geom class="decor" pos="3.72 -0.72 1.1" size="0.04 0.08 1.1" material="steel"/>
+    <!-- ===== Glass panoramic lift: shaft x 3.75..5.25, y -0.75..0.75, open on the west (-x) side,
+         up to L23's ceiling so the camera can watch the ride ===== -->
+    <geom class="decor" pos="4.5 0.8 2.2" size="0.8 0.03 2.2" material="glass"/>
+    <geom class="decor" pos="4.5 -0.8 2.2" size="0.8 0.03 2.2" material="glass"/>
+    <geom class="decor" pos="5.3 0 2.2" size="0.03 0.8 2.2" material="glass"/>
+    <geom class="decor" pos="4.5 0 4.42" size="0.83 0.83 0.03" material="steel"/>
+    <geom class="decor" type="cylinder" pos="3.77 0.77 2.2" size="0.035 2.2" material="steel"/>
+    <geom class="decor" type="cylinder" pos="3.77 -0.77 2.2" size="0.035 2.2" material="steel"/>
+    <geom class="decor" type="cylinder" pos="5.27 0.77 2.2" size="0.035 2.2" material="steel"/>
+    <geom class="decor" type="cylinder" pos="5.27 -0.77 2.2" size="0.035 2.2" material="steel"/>
 
     <body name="lift_car" pos="4.5 0 0" gravcomp="1">
       <joint name="lift" type="slide" axis="0 0 1" range="0 3.2" damping="2000"/>
       <inertial pos="0 0 0" mass="300" diaginertia="100 100 100"/>
       <geom name="car_floor" type="box" pos="0 0 -0.03" size="0.74 0.74 0.03" material="lift_car" contype="2" conaffinity="2"/>
-      <geom type="box" pos="0 0.72 0.6" size="0.74 0.02 0.6" material="lift_car" contype="2" conaffinity="2"/>
-      <geom type="box" pos="0 -0.72 0.6" size="0.74 0.02 0.6" material="lift_car" contype="2" conaffinity="2"/>
-      <geom type="box" pos="0.72 0 0.6" size="0.02 0.74 0.6" material="lift_car" contype="2" conaffinity="2"/>
+      <geom type="box" pos="0 0.72 0.5" size="0.74 0.02 0.5" material="glass" contype="2" conaffinity="2"/>
+      <geom type="box" pos="0 -0.72 0.5" size="0.74 0.02 0.5" material="glass" contype="2" conaffinity="2"/>
+      <geom type="box" pos="0.72 0 0.5" size="0.02 0.74 0.5" material="glass" contype="2" conaffinity="2"/>
+      <geom type="box" pos="0 0.72 1.01" size="0.74 0.03 0.015" material="steel" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 -0.72 1.01" size="0.74 0.03 0.015" material="steel" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0.72 0 1.01" size="0.03 0.74 0.015" material="steel" contype="0" conaffinity="0"/>
     </body>
 
     <!-- ===== Level 23 (slab top at z = 3.2), x 1..7, with the shaft hole ===== -->
