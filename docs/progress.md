@@ -20,7 +20,8 @@
 - [ ] Cut per-event Supabase round trips (~1.1 s/event now)
 - [ ] PayPal sandbox: `PAYPAL_MODE=sandbox`, client id/secret, shop payout emails; check `final_capture` releases the rest; enable Payouts
 - [x] LLM key set (Muse Spark replies in ~1.8 s)
-- [ ] Verify handoff agent on the ambiguous case
+- [x] Handoff agent verified on the ambiguous case via Muse (wait, then charge A only)
+- [ ] Handoff decision takes ~5–6 s with Muse; hide behind "Verifying handoff…" or start the call on door_closed
 - [ ] Devpost pages (needs Claude in Chrome connected)
 
 ## Next (no credentials needed)

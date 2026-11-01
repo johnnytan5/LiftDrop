@@ -17,7 +17,6 @@ export const llmConfigured = () => !!process.env.LLM_API_KEY;
 export async function chat(opts: {
   messages: ChatMessage[];
   tools?: ToolDef[];
-  toolChoice?: string; // force one tool by name
   maxTokens?: number;
   timeoutMs?: number;
 }): Promise<AssistantMessage> {
@@ -29,7 +28,6 @@ export async function chat(opts: {
       model: process.env.LLM_MODEL ?? 'muse-spark-1.1',
       messages: opts.messages,
       ...(opts.tools?.length ? { tools: opts.tools } : {}),
-      ...(opts.toolChoice ? { tool_choice: { type: 'function', function: { name: opts.toolChoice } } } : {}),
       ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
       // Muse-specific; OpenRouter ignores it. Keeps the handoff decision fast.
       ...(base.includes('meta.ai') ? { reasoning_effort: 'minimal' } : {}),
@@ -45,11 +43,13 @@ export async function chat(opts: {
   return choice.message;
 }
 
-/** Call once, expect exactly one call of `tool`, return its parsed arguments. */
+/** Call once, expect a call of `tool`, return its parsed arguments.
+ *  Muse only accepts tool_choice "auto", so the system prompt must demand the call. */
 export async function callTool<T>(system: string, user: string, tool: ToolDef): Promise<T> {
   const msg = await chat({
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-    tools: [tool], toolChoice: tool.function.name, maxTokens: 600,
+    // Muse reasoning counts against max_tokens; 600 ran out (finish_reason length).
+    tools: [tool], maxTokens: 2000,
   });
   const call = msg.tool_calls?.find((c) => c.function.name === tool.function.name);
   if (!call) throw new Error(`llm did not call ${tool.function.name}`);
