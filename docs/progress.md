@@ -21,7 +21,8 @@
 - [x] PayPal sandbox spike: authorize → capture $4.50 of $13.50 with `final_capture` (rest released, 2nd capture rejected), idempotent retry, payout SUCCESS in ~20 s (2026-11-01)
 - [x] Operator moved to a US business account + new app (MY account held MYR, payouts in USD failed)
 - [ ] Re-run hold + partial capture on the new US operator app, then set `PAYPAL_MODE=sandbox`
-- [ ] Payout lands ~20 s after batch creation: show `paid_out` as pending until polled SUCCESS
+- [x] Payouts tracked as `paying_out` + `payout_pending` ledger rows until PayPal reports the batch SUCCESS (in-process poller, resumed from /api/state after restart)
+- [ ] Clean handoff takes ~4.3 s on Supabase (~13 sequential DB round trips): return after capture, do payouts in background, parallelise reads
 - [x] LLM key set (Muse Spark replies in ~1.8 s)
 - [x] Handoff agent verified on the ambiguous case via Muse (wait, then charge A only)
 - [x] Clean handoffs decided by code instantly (source `code`); only ambiguous ones call the agent (~4–6 s on Muse)

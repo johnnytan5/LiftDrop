@@ -135,6 +135,21 @@ export async function voidAuthorization(authId: string, requestId: string): Prom
   await call(`/v2/payments/authorizations/${authId}/void`, {}, requestId);
 }
 
+export type PayoutStatus = { done: boolean; ok: boolean; status: string; items: { shop_id: string; status: string }[] };
+
+/** Batch is done when PayPal reports a terminal state; ok only if every item reached SUCCESS. */
+export async function getPayout(batchId: string): Promise<PayoutStatus> {
+  if (mode() === 'mock') return { done: true, ok: true, status: 'SUCCESS', items: [] };
+  const j = await get(`/v1/payments/payouts/${batchId}`);
+  const items = (j.items ?? []).map((i: { transaction_status: string; payout_item: { sender_item_id: string } }) => ({
+    shop_id: i.payout_item.sender_item_id.split('-').pop()!, status: i.transaction_status,
+  }));
+  const status: string = j.batch_header.batch_status;
+  const itemsDone = items.length > 0 && items.every((i: { status: string }) => i.status !== 'PENDING' && i.status !== 'ONHOLD');
+  const done = ['DENIED', 'CANCELED'].includes(status) || (status === 'SUCCESS' && itemsDone);
+  return { done, ok: done && status === 'SUCCESS' && items.every((i: { status: string }) => i.status === 'SUCCESS'), status, items };
+}
+
 /** One batch per order; sender_batch_id makes retries safe. */
 export async function createPayout(batchId: string, items: PayoutItem[]): Promise<{ batchId: string; status: string }> {
   if (mode() === 'mock') return once(batchId, 'payout', () => ({ batchId: mid('PAYOUT'), status: 'SUCCESS' }));

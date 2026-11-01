@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 
 export type OrderStatus =
   | 'created' | 'held' | 'collecting' | 'en_route' | 'at_door'
-  | 'captured' | 'partially_captured' | 'voided' | 'returning' | 'paid_out' | 'failed';
+  | 'captured' | 'partially_captured' | 'voided' | 'returning' | 'paying_out' | 'paid_out' | 'failed';
 
 export type Shop = { id: string; name: string; fee_bps: number; payout_email: string | null };
 export type Item = { id: string; shop_id: string; name: string; price_cents: number; grams: number; stock: number };
@@ -20,7 +20,7 @@ export type Compartment = {
 };
 export type OrderItem = { order_id: string; item_id: string; compartment_id: string; qty: number };
 export type Event = { id: number; order_id: string; type: string; payload: Record<string, unknown>; at: string };
-export type LedgerKind = 'held' | 'captured' | 'voided' | 'fee' | 'paid_out' | 'refunded';
+export type LedgerKind = 'held' | 'captured' | 'voided' | 'fee' | 'payout_pending' | 'paid_out' | 'refunded';
 export type LedgerRow = {
   id: number; order_id: string; shop_id: string | null; kind: LedgerKind;
   amount_cents: number; paypal_ref: string | null; at: string;
@@ -126,6 +126,10 @@ export async function updateOrder(id: string, patch: Partial<Order>, from?: Orde
   const o = await getOrder(id);
   if (from && o.status !== from) throw new Error(`order ${id} changed concurrently (expected ${from})`);
   return Object.assign(o, patch);
+}
+
+export async function listOrdersByStatus(status: OrderStatus) {
+  return sb ? q<Order[]>(sb.from('orders').select().eq('status', status)) : db().orders.filter((o) => o.status === status);
 }
 
 export async function listOrders() {

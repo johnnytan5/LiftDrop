@@ -11,8 +11,9 @@ const NEXT: Record<OrderStatus, OrderStatus[]> = {
   collecting: ['en_route', 'voided', 'failed'],
   en_route: ['at_door', 'voided', 'failed'],
   at_door: ['captured', 'partially_captured', 'voided', 'failed'],
-  captured: ['paid_out', 'failed'],
-  partially_captured: ['paid_out', 'failed'],
+  captured: ['paying_out', 'failed'],
+  partially_captured: ['paying_out', 'failed'],
+  paying_out: ['paid_out', 'failed'],
   voided: ['returning'],
   returning: [],
   paid_out: [],
@@ -190,7 +191,46 @@ async function payShops(order: Order, charged: string[]) {
   const batch = await paypal.createPayout(`liftdrop-${order.id}-payout`, items);
   await db.insertLedger(split.flatMap((s) => [
     { order_id: order.id, shop_id: s.shop.id, kind: 'fee' as const, amount_cents: s.fee, paypal_ref: null },
-    { order_id: order.id, shop_id: s.shop.id, kind: 'paid_out' as const, amount_cents: s.net, paypal_ref: batch.batchId },
+    { order_id: order.id, shop_id: s.shop.id, kind: 'payout_pending' as const, amount_cents: s.net, paypal_ref: batch.batchId },
   ]));
-  return move(order, 'paid_out', { payout_batch_id: batch.batchId });
+  return move(order, 'paying_out', { payout_batch_id: batch.batchId });
+}
+
+/** Ask PayPal once; on a terminal batch, record what landed and finish the order. */
+export async function syncPayout(orderId: string) {
+  const order = await db.getOrder(orderId);
+  if (order.status !== 'paying_out' || !order.payout_batch_id) return order;
+  const p = await paypal.getPayout(order.payout_batch_id);
+  if (!p.done) return order;
+  const pending = (await db.listLedger(orderId)).filter((r) => r.kind === 'payout_pending');
+  if (!p.ok) {
+    await db.insertEvent(orderId, 'error', { message: `payout ${p.status}`, items: p.items });
+    return move(order, 'failed');
+  }
+  await db.insertLedger(pending.map((r) => ({ order_id: orderId, shop_id: r.shop_id, kind: 'paid_out' as const, amount_cents: r.amount_cents, paypal_ref: r.paypal_ref })));
+  return move(order, 'paid_out');
+}
+
+// ponytail: in-process poller (single Render instance). Orders left in paying_out by a restart
+// are picked up by syncPendingPayouts() on the next /api/state read.
+const watching = new Set<string>();
+export function watchPayout(orderId: string, everyMs = 3000, maxTries = 60) {
+  if (watching.has(orderId)) return;
+  watching.add(orderId);
+  let tries = 0;
+  const tick = async () => {
+    try {
+      const o = await syncPayout(orderId);
+      if (o.status === 'paying_out' && ++tries < maxTries) return void setTimeout(tick, everyMs);
+    } catch (e) {
+      console.error(`payout sync ${orderId}:`, e);
+      if (++tries < maxTries) return void setTimeout(tick, everyMs);
+    }
+    watching.delete(orderId);
+  };
+  setTimeout(tick, everyMs);
+}
+
+export async function syncPendingPayouts() {
+  for (const o of await db.listOrdersByStatus('paying_out')) watchPayout(o.id);
 }
