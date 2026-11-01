@@ -36,3 +36,14 @@
 - Order page (`/order`) with PayPal JS SDK button (`intent=authorize`) + mock approve
 - Order assistant (`/api/assistant`)
 - Sim: tower scene, two compartments, touch sensors, lift (plan §4)
+
+## MuJoCo tower sim (started 2026-11-01)
+
+- [x] `sim/scene_tower.xml`: lobby (café + bakery counters, dock), glass panoramic lift, level 23 slab with pantry table
+- [x] `sim/liftdrop_bot.xml` (from Concierge delivery_bot_v2): two compartments A/B, sliding doors, load-cell plates with force sensors (80 g / 450 g read exactly), front + rear casters
+- [x] `lib/sim/tower.ts`: velocity-driven base with accel limits, waypoint nav, lift ride, load at counters, customer take / half-weight fault, sensor-driven weight events, timeout, returns untaken items to their shop, docks
+- [x] `lib/sim/tower.test.ts`: full headless delivery on the real WASM build (part of `npm run check`)
+- [x] Browser: `lib/sim/sim.worker.ts`, `components/TowerView.tsx` (orbit follow cam, glass, labels), `/sim` page forwarding sensor events to `/api/events`
+- [ ] Look at `/sim` in a real browser (not yet seen rendered: Chrome extension disconnected)
+- [ ] Vendor "Loaded" from the vendor page instead of the /sim panel
+- [ ] Customer take/done from the phone order page instead of the /sim panel
