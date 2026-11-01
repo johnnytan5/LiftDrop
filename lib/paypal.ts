@@ -54,6 +54,14 @@ async function call(path: string, body: unknown, requestId: string) {
   return j;
 }
 
+/** Sandbox GET, for status checks (authorization, payout batch). */
+export async function get(path: string) {
+  const res = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${await accessToken()}` } });
+  const j = await res.json();
+  if (!res.ok) throw new PayPalError(j.name ?? `HTTP_${res.status}`, j.message ?? '', j.debug_id);
+  return j;
+}
+
 // ---------- mock ----------
 
 type MockAuth = { amount: number; captured: number; closed: boolean };
@@ -76,13 +84,15 @@ function once<T>(requestId: string, op: string, fn: () => T): T {
 
 // ---------- API ----------
 
-export async function createOrder(cents: number, requestId: string): Promise<{ id: string }> {
+/** returnUrl only for redirect checkout (spike script); the JS SDK button doesn't need it. */
+export async function createOrder(cents: number, requestId: string, returnUrl?: string): Promise<{ id: string; approveUrl?: string }> {
   if (mode() === 'mock') return once(requestId, 'create', () => { const id = mid('ORD'); mock().orders.set(id, cents); return { id }; });
   const j = await call('/v2/checkout/orders', {
     intent: 'AUTHORIZE',
     purchase_units: [{ amount: { currency_code: 'USD', value: usd(cents) }, description: 'LiftDrop delivery' }],
+    ...(returnUrl ? { payment_source: { paypal: { experience_context: { return_url: returnUrl, cancel_url: returnUrl, user_action: 'CONTINUE' } } } } : {}),
   }, requestId);
-  return { id: j.id };
+  return { id: j.id, approveUrl: j.links?.find((l: { rel: string }) => l.rel === 'approve' || l.rel === 'payer-action')?.href };
 }
 
 /** Call after the buyer approves in the PayPal popup. Reserves funds; charges nothing. */
