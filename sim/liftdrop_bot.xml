@@ -1,0 +1,118 @@
+<mujoco model="liftdrop_bot">
+  <!--
+    LiftDrop delivery robot. Reused from Concierge's sim/delivery_bot_v2.xml (diff-drive skeleton
+    from MuJoCo's car.xml, cabinet shell) and changed for LiftDrop:
+      - two stacked compartments, A (upper) and B (lower), each with a sideways sliding door
+      - real collision walls + shelf around the compartments so a bag can sit inside
+      - a load cell under each compartment: the floor plate is its own body and a force sensor at
+        its mount reads plate + contents (the backend gets grams minus the plate's tare).
+        A touch sensor won't do: its contact-normal ray reaches up through the compartment above.
+    The compartments open on the robot's -y side (its right when driving forward).
+    Included by scene_tower.xml; on its own it has no floor.
+  -->
+  <default>
+    <default class="bot">
+      <!-- conaffinity 3: robot touches the world (bit 1) and the lift car (bit 2) -->
+      <geom contype="1" conaffinity="3"/>
+      <joint damping="1.5"/>
+      <default class="wheel">
+        <!-- condim 1 = frictionless: the base is velocity-driven, so wheels only carry load.
+             With friction they skid against the commanded motion and tip the robot. -->
+        <geom type="cylinder" size="0.06 0.02" rgba="0.15 0.15 0.15 1" condim="1"/>
+      </default>
+      <default class="shell">
+        <geom contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="wall">
+        <geom type="box" rgba="0 0 0 0" group="3"/>
+      </default>
+      <default class="door">
+        <joint type="slide" axis="1 0 0" range="0 0.3" damping="6"/>
+        <geom type="box" size="0.155 0.012 0.075" material="shell_accent"/>
+      </default>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="robot" pos="1 -2 0.09" childclass="bot">
+      <freejoint name="robot"/>
+      <!-- Casters front and back: with only the rear one the drive wheels sit 2 cm ahead of the
+           centre of mass and the tall cabinet pitches forward whenever it accelerates. -->
+      <geom name="rear_support" pos="-0.16 0 -0.055" type="sphere" size="0.035" condim="1" priority="1"/>
+      <geom name="front_support" pos="0.16 0 -0.055" type="sphere" size="0.035" condim="1" priority="1"/>
+      <geom name="chassis" type="box" size="0.19 0.16 0.03" class="shell" material="shell_white"/>
+      <geom name="chassis_collision" type="box" size="0.19 0.16 0.03" rgba="0 0 0 0" group="3"/>
+
+      <body name="left_wheel" pos="0.02 0.19 -0.03" zaxis="0 1 0">
+        <joint name="left"/>
+        <geom class="wheel"/>
+      </body>
+      <body name="right_wheel" pos="0.02 -0.19 -0.03" zaxis="0 1 0">
+        <joint name="right"/>
+        <geom class="wheel"/>
+      </body>
+
+      <body name="tower" pos="0 0 0.03">
+        <inertial pos="0 0 0.35" mass="14" diaginertia="0.7 0.7 0.18"/>
+
+        <!-- Visible cabinet (no collision). Open on -y; doors cover it. -->
+        <geom type="box" pos="0 0.135 0.22" size="0.15 0.03 0.20" material="shell_white" class="shell"/>
+        <geom type="box" pos="0.135 0 0.22" size="0.03 0.135 0.20" material="shell_white" class="shell"/>
+        <geom type="box" pos="-0.135 0 0.22" size="0.03 0.135 0.20" material="shell_white" class="shell"/>
+        <geom type="box" pos="0 0 0.03" size="0.15 0.135 0.02" material="shell_white" class="shell"/>
+        <geom type="box" pos="0 0 0.22" size="0.105 0.105 0.01" material="shell_grey" class="shell"/>
+        <geom type="box" pos="0 0 0.41" size="0.15 0.135 0.02" material="shell_white" class="shell"/>
+        <geom type="cylinder" pos="0 0 0.46" size="0.155 0.05" material="shell_white" class="shell"/>
+        <geom type="cylinder" pos="0 0 0.51" size="0.157 0.01" material="shell_accent" class="shell"/>
+        <geom type="cylinder" pos="0 0 0.63" size="0.12 0.09" material="shell_white" class="shell"/>
+        <geom type="sphere" pos="0 0 0.72" size="0.12" material="shell_white" class="shell"/>
+        <geom name="screen" type="box" pos="0.108 0 0.635" size="0.02 0.075 0.075" material="screen_dark" class="shell"/>
+
+        <!-- Compartment collision: floor, shelf, ceiling, three walls; head above. -->
+        <geom name="ceiling_col" class="wall" pos="0 0 0.41" size="0.15 0.135 0.02"/>
+        <geom class="wall" pos="0 0.135 0.22" size="0.15 0.03 0.20"/>
+        <geom class="wall" pos="0.135 0 0.22" size="0.03 0.135 0.20"/>
+        <geom class="wall" pos="-0.135 0 0.22" size="0.03 0.135 0.20"/>
+        <geom name="head_col" type="cylinder" pos="0 0 0.64" size="0.16 0.2" rgba="0 0 0 0" group="3"/>
+
+        <!-- Load-cell plates (no joint: welded to the tower; the force sensor reads the weld). -->
+        <body name="plate_A" pos="0 0 0.22">
+          <inertial pos="0 0 0" mass="0.05" diaginertia="1e-4 1e-4 1e-4"/>
+          <geom name="shelf_col" class="wall" size="0.105 0.105 0.01"/>
+          <site name="scale_A" size="0.01" group="4"/>
+        </body>
+        <body name="plate_B" pos="0 0 0.03">
+          <inertial pos="0 0 0" mass="0.05" diaginertia="1e-4 1e-4 1e-4"/>
+          <geom name="floor_col" class="wall" size="0.15 0.135 0.02"/>
+          <site name="scale_B" size="0.01" group="4"/>
+        </body>
+        <!-- Where a loaded bag is placed (tower frame) -->
+        <site name="slot_A" pos="0 0 0.30" size="0.01" group="4"/>
+        <site name="slot_B" pos="0 0 0.12" size="0.01" group="4"/>
+
+        <body name="door_A" pos="0 -0.17 0.31">
+          <joint name="door_A" class="door"/>
+          <inertial pos="0 0 0" mass="0.25" diaginertia="0.003 0.003 0.001"/>
+          <geom class="door"/>
+        </body>
+        <body name="door_B" pos="0 -0.17 0.13">
+          <joint name="door_B" class="door"/>
+          <inertial pos="0 0 0" mass="0.25" diaginertia="0.003 0.003 0.001"/>
+          <geom class="door"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="door_A" joint="door_A" kp="300" kv="30" ctrlrange="0 0.3"/>
+    <position name="door_B" joint="door_B" kp="300" kv="30" ctrlrange="0 0.3"/>
+  </actuator>
+
+  <sensor>
+    <force name="scale_A" site="scale_A"/>
+    <force name="scale_B" site="scale_B"/>
+    <jointpos name="door_A" joint="door_A"/>
+    <jointpos name="door_B" joint="door_B"/>
+  </sensor>
+</mujoco>

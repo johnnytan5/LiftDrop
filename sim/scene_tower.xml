@@ -1,0 +1,131 @@
+<mujoco model="liftdrop_tower">
+  <!--
+    LiftDrop tower: ground-floor retail (café + bakery counters) and level 23 (office pantry),
+    joined by a lift. Only these two floors are modelled; L23 is a slab 3.2 m above the lobby
+    so a three-quarter camera sees both. Metres, z up, lobby floor at z=0.
+
+    Collision bits: world = 1, lift car = 2, robot conaffinity = 3 (touches both).
+    The car and the world never collide, so the car can pass through the L23 slab's shaft hole
+    and sit flush with either floor.
+
+    Layout (x east, y north):
+      lobby   dock (1,-2) · café counter (-1, 3.3) · bakery counter (-4, 3.3) · lift (4.5, 0)
+      L23     pantry table (2.2, -3.4), slab x 1..7
+  -->
+  <compiler autolimits="true"/>
+  <option timestep="0.002"/>
+  <visual>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.5 0.5 0.5"/>
+  </visual>
+
+  <asset>
+    <texture name="lobby_tiles" type="2d" builtin="checker" width="512" height="512" rgb1="0.82 0.80 0.76" rgb2="0.74 0.72 0.68"/>
+    <material name="lobby_floor" texture="lobby_tiles" texrepeat="12 10"/>
+    <material name="carpet" rgba="0.36 0.42 0.50 1"/>
+    <material name="wall" rgba="0.92 0.91 0.88 1"/>
+    <material name="glass" rgba="0.6 0.8 0.9 0.25"/>
+    <material name="steel" rgba="0.55 0.58 0.62 1"/>
+    <material name="lift_car" rgba="0.70 0.72 0.75 1"/>
+    <material name="wood" rgba="0.55 0.38 0.24 1"/>
+    <material name="bakery" rgba="0.85 0.55 0.25 1"/>
+    <material name="cafe" rgba="0.30 0.22 0.18 1"/>
+    <material name="pantry" rgba="0.25 0.55 0.45 1"/>
+    <material name="shell_white" rgba="0.95 0.95 0.97 1"/>
+    <material name="shell_grey" rgba="0.75 0.76 0.78 1"/>
+    <material name="shell_accent" rgba="0.10 0.45 0.85 1"/>
+    <material name="screen_dark" rgba="0.05 0.05 0.08 1"/>
+  </asset>
+
+  <default>
+    <default class="static">
+      <geom type="box" contype="1" conaffinity="1"/>
+    </default>
+    <default class="decor">
+      <geom type="box" contype="0" conaffinity="0"/>
+    </default>
+    <default class="bag">
+      <geom type="box" size="0.07 0.06 0.05" contype="1" conaffinity="1" friction="1 0.01 0.001"/>
+    </default>
+  </default>
+
+  <include file="liftdrop_bot.xml"/>
+
+  <worldbody>
+    <light name="sun" pos="0 0 9" dir="0.2 0.3 -1" diffuse="0.7 0.7 0.7" castshadow="false"/>
+
+    <!-- ===== Lobby (z = 0) ===== -->
+    <geom name="lobby_floor" type="plane" size="7 5 0.05" material="lobby_floor" class="static"/>
+    <!-- low perimeter walls so a camera above sees in -->
+    <geom class="static" pos="0 5 0.6" size="7 0.05 0.6" material="wall"/>
+    <geom class="static" pos="-7 0 0.6" size="0.05 5 0.6" material="wall"/>
+    <geom class="static" pos="0 -5 0.3" size="7 0.05 0.3" material="glass"/>
+
+    <!-- Café counter and back bar -->
+    <geom name="cafe_counter" class="static" pos="-1 3.3 0.45" size="0.9 0.3 0.45" material="cafe"/>
+    <geom class="decor" pos="-1 3.3 0.92" size="0.92 0.32 0.02" material="wood"/>
+    <geom class="decor" pos="-1 4.7 1.0" size="0.9 0.25 1.0" material="cafe"/>
+    <geom class="decor" type="cylinder" pos="-1.4 3.3 1.06" size="0.12 0.12" material="steel"/>
+    <!-- Bakery counter with a glass display -->
+    <geom name="bakery_counter" class="static" pos="-4 3.3 0.45" size="0.9 0.3 0.45" material="bakery"/>
+    <geom class="decor" pos="-4 3.3 1.05" size="0.85 0.28 0.12" material="glass"/>
+    <geom class="decor" pos="-4 4.7 1.0" size="0.9 0.25 1.0" material="bakery"/>
+    <!-- Robot dock -->
+    <geom class="decor" pos="1 -2 0.002" size="0.35 0.35 0.002" rgba="0.1 0.45 0.85 1"/>
+
+    <!-- ===== Lift shaft: x 3.75..5.25, y -0.75..0.75, open on the west (-x) side ===== -->
+    <geom class="decor" pos="4.5 0.8 3.4" size="0.8 0.05 3.4" material="steel"/>
+    <geom class="decor" pos="4.5 -0.8 3.4" size="0.8 0.05 3.4" material="steel"/>
+    <geom class="decor" pos="5.3 0 3.4" size="0.05 0.8 3.4" material="steel"/>
+    <!-- lobby door frame -->
+    <geom class="decor" pos="3.72 0.72 1.1" size="0.04 0.08 1.1" material="steel"/>
+    <geom class="decor" pos="3.72 -0.72 1.1" size="0.04 0.08 1.1" material="steel"/>
+
+    <body name="lift_car" pos="4.5 0 0" gravcomp="1">
+      <joint name="lift" type="slide" axis="0 0 1" range="0 3.2" damping="2000"/>
+      <inertial pos="0 0 0" mass="300" diaginertia="100 100 100"/>
+      <geom name="car_floor" type="box" pos="0 0 -0.03" size="0.74 0.74 0.03" material="lift_car" contype="2" conaffinity="2"/>
+      <geom type="box" pos="0 0.72 0.6" size="0.74 0.02 0.6" material="lift_car" contype="2" conaffinity="2"/>
+      <geom type="box" pos="0 -0.72 0.6" size="0.74 0.02 0.6" material="lift_car" contype="2" conaffinity="2"/>
+      <geom type="box" pos="0.72 0 0.6" size="0.02 0.74 0.6" material="lift_car" contype="2" conaffinity="2"/>
+    </body>
+
+    <!-- ===== Level 23 (slab top at z = 3.2), x 1..7, with the shaft hole ===== -->
+    <geom name="l23_west" class="static" pos="2.375 0 3.15" size="1.375 5 0.05" material="carpet"/>
+    <geom class="static" pos="6.125 0 3.15" size="0.875 5 0.05" material="carpet"/>
+    <geom class="static" pos="4.5 2.875 3.15" size="0.75 2.125 0.05" material="carpet"/>
+    <geom class="static" pos="4.5 -2.875 3.15" size="0.75 2.125 0.05" material="carpet"/>
+    <geom class="static" pos="4 5 3.75" size="3 0.05 0.55" material="wall"/>
+    <geom class="static" pos="7 0 3.75" size="0.05 5 0.55" material="wall"/>
+    <geom class="decor" pos="1 0 3.6" size="0.02 5 0.4" material="glass"/>
+    <!-- Pantry: table where the customer collects, fridge, sign -->
+    <geom name="pantry_table" class="static" pos="2.2 -3.6 3.6" size="0.7 0.35 0.4" material="wood"/>
+    <geom class="decor" pos="1.4 -4.6 4.0" size="0.3 0.3 0.8" material="pantry"/>
+    <site name="pantry_drop" pos="2.2 -3.6 4.05" size="0.02" group="4"/>
+
+    <!-- ===== Bags: free bodies, parked on their counters until loaded ===== -->
+    <body name="bag_A" pos="-4.3 3.3 0.95">
+      <freejoint name="bag_A"/>
+      <inertial pos="0 0 0" mass="0.08" diaginertia="0.0002 0.0002 0.0002"/>
+      <geom class="bag" rgba="0.95 0.85 0.55 1"/>
+    </body>
+    <body name="bag_B" pos="-1.3 3.3 0.95">
+      <freejoint name="bag_B"/>
+      <inertial pos="0 0 0" mass="0.45" diaginertia="0.0006 0.0006 0.0006"/>
+      <geom class="bag" rgba="0.55 0.38 0.25 1"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- Stiff enough that a 15 kg robot sags the car < 1 mm (kv ≈ critical damping for 300 kg). -->
+    <position name="lift" joint="lift" kp="300000" kv="19000" ctrlrange="0 3.2"/>
+  </actuator>
+
+  <sensor>
+    <jointpos name="lift" joint="lift"/>
+  </sensor>
+
+  <keyframe>
+    <!-- robot(7) wheels(2) doors(2) lift(1) bag_A(7) bag_B(7) -->
+    <key name="home" qpos="1 -2 0.09 1 0 0 0  0 0  0 0  0  -4.3 3.3 0.95 1 0 0 0  -1.3 3.3 0.95 1 0 0 0"/>
+  </keyframe>
+</mujoco>
