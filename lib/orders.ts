@@ -21,7 +21,7 @@ const NEXT: Record<OrderStatus, OrderStatus[]> = {
 
 async function move(order: Order, to: OrderStatus, patch: Partial<Order> = {}) {
   if (!NEXT[order.status].includes(to)) throw new Error(`order ${order.id}: ${order.status} -> ${to} not allowed`);
-  return db.updateOrder(order.id, { ...patch, status: to });
+  return db.updateOrder(order.id, { ...patch, status: to }, order.status);
 }
 
 const COMPARTMENT_IDS = ['A', 'B'];

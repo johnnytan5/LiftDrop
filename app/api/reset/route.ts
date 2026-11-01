@@ -1,10 +1,13 @@
 import { resetDb } from '../../../lib/db.ts';
 import { resetMock } from '../../../lib/paypal.ts';
+import { respond } from '../_respond.ts';
 
-// ponytail: mock-only demo reset; remove or guard once Supabase holds real sandbox data.
+// Mock-only demo reset (resetDb refuses when Supabase is the backend).
 export async function POST() {
-  if (process.env.PAYPAL_MODE === 'sandbox') return Response.json({ error: 'disabled in sandbox mode' }, { status: 403 });
-  resetDb();
-  resetMock();
-  return Response.json({ ok: true });
+  return respond(async () => {
+    if (process.env.PAYPAL_MODE === 'sandbox') throw new Error('disabled in sandbox mode');
+    resetDb();
+    resetMock();
+    return { ok: true };
+  });
 }

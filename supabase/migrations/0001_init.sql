@@ -100,12 +100,17 @@ alter table order_items enable row level security;
 alter table events enable row level security;
 alter table ledger enable row level security;
 alter table decisions enable row level security;
-create policy "public read" on shops for select using (true);
-create policy "public read" on items for select using (true);
-create policy "public read" on orders for select using (true);
-create policy "public read" on compartments for select using (true);
-create policy "public read" on ledger for select using (true);
-create policy "public read" on decisions for select using (true);
+-- Browser (anon) reads live status; only the server (service_role) writes. events stay server-only.
+grant select on shops, items, orders, compartments, order_items, ledger, decisions to anon, authenticated;
+grant all on all tables in schema public to service_role;
+grant usage, select on all sequences in schema public to service_role;
+create policy "public read" on shops for select to anon, authenticated using (true);
+create policy "public read" on items for select to anon, authenticated using (true);
+create policy "public read" on orders for select to anon, authenticated using (true);
+create policy "public read" on compartments for select to anon, authenticated using (true);
+create policy "public read" on order_items for select to anon, authenticated using (true);
+create policy "public read" on ledger for select to anon, authenticated using (true);
+create policy "public read" on decisions for select to anon, authenticated using (true);
 
 alter publication supabase_realtime add table orders, compartments, ledger, decisions;
 

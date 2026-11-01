@@ -15,9 +15,12 @@
 
 ## Waiting on owner
 
-- [ ] Supabase project → apply migration → swap `lib/db.ts` bodies for PostgREST/supabase-js, realtime instead of polling
+- [x] Supabase project `duovflifoomrfqpqzpet`: migration applied, `lib/db.ts` uses supabase-js when `SUPABASE_URL` is set (mock otherwise); partial-capture lifecycle verified end to end (2026-10-31)
+- [ ] Realtime subscriptions instead of 1 s polling
+- [ ] Cut per-event Supabase round trips (~1.1 s/event now)
 - [ ] PayPal sandbox: `PAYPAL_MODE=sandbox`, client id/secret, shop payout emails; check `final_capture` releases the rest; enable Payouts
-- [ ] LLM key (`LLM_API_KEY`) to switch handoff from fallback to agent
+- [x] LLM key set (Muse Spark replies in ~1.8 s)
+- [ ] Verify handoff agent on the ambiguous case
 - [ ] Devpost pages (needs Claude in Chrome connected)
 
 ## Next (no credentials needed)
