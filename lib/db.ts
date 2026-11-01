@@ -109,9 +109,10 @@ export async function insertOrder(o: NewOrder, comps: Compartment[], items: Orde
 }
 
 export async function getOrder(id: string) {
+  // Mock returns copies, like Supabase, so callers never see later mutations.
   const o = sb ? await q<Order | null>(sb.from('orders').select().eq('id', id).maybeSingle()) : db().orders.find((x) => x.id === id);
   if (!o) throw new Error(`order ${id} not found`);
-  return o;
+  return { ...o };
 }
 
 /** With `from`, the update only applies if the order is still in that status (no double transitions). */
@@ -123,9 +124,10 @@ export async function updateOrder(id: string, patch: Partial<Order>, from?: Orde
     if (!rows.length) throw new Error(`order ${id} changed concurrently (expected ${from})`);
     return rows[0];
   }
-  const o = await getOrder(id);
+  const o = db().orders.find((x) => x.id === id);
+  if (!o) throw new Error(`order ${id} not found`);
   if (from && o.status !== from) throw new Error(`order ${id} changed concurrently (expected ${from})`);
-  return Object.assign(o, patch);
+  return { ...Object.assign(o, patch) };
 }
 
 export async function listOrdersByStatus(status: OrderStatus) {
@@ -138,14 +140,14 @@ export async function listOrders() {
 
 export async function getCompartments(orderId: string) {
   return sb ? q<Compartment[]>(sb.from('compartments').select().eq('order_id', orderId).order('id'))
-    : db().compartments.filter((c) => c.order_id === orderId);
+    : db().compartments.filter((c) => c.order_id === orderId).map((c) => ({ ...c }));
 }
 
 export async function updateCompartment(orderId: string, id: string, patch: Partial<Compartment>) {
   if (sb) return q<Compartment>(sb.from('compartments').update(patch).eq('order_id', orderId).eq('id', id).select().single());
   const c = db().compartments.find((x) => x.order_id === orderId && x.id === id);
   if (!c) throw new Error(`compartment ${orderId}/${id} not found`);
-  return Object.assign(c, patch);
+  return { ...Object.assign(c, patch) };
 }
 
 export async function getOrderItems(orderId: string) {

@@ -22,7 +22,8 @@
 - [x] Operator moved to a US business account + new app (MY account held MYR, payouts in USD failed)
 - [ ] Re-run hold + partial capture on the new US operator app, then set `PAYPAL_MODE=sandbox`
 - [x] Payouts tracked as `paying_out` + `payout_pending` ledger rows until PayPal reports the batch SUCCESS (in-process poller, resumed from /api/state after restart)
-- [ ] Clean handoff takes ~4.3 s on Supabase (~13 sequential DB round trips): return after capture, do payouts in background, parallelise reads
+- [x] Clean handoff 4.3 s → 0.8–1.0 s on Supabase: reply after capture, payouts in background, independent DB calls in parallel
+- [x] Policy decided (2026-11-01): untaken items are never charged and go back to the shop (pure "pay only for what you take")
 - [x] LLM key set (Muse Spark replies in ~1.8 s)
 - [x] Handoff agent verified on the ambiguous case via Muse (wait, then charge A only)
 - [x] Clean handoffs decided by code instantly (source `code`); only ambiguous ones call the agent (~4–6 s on Muse)

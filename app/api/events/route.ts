@@ -1,4 +1,4 @@
-import { handleEvent, watchPayout, type SensorEvent } from '../../../lib/orders.ts';
+import { handleEvent, type SensorEvent } from '../../../lib/orders.ts';
 import { respond } from '../_respond.ts';
 
 const TYPES = ['loaded', 'arrived', 'door_opened', 'weight', 'door_closed', 'timeout'];
@@ -9,8 +9,6 @@ export async function POST(req: Request) {
   return respond(async () => {
     if (!TYPES.includes(ev.type)) throw new Error(`unknown event type ${ev.type}`);
     if (ev.type === 'weight' && !(Number.isFinite(ev.grams) && ev.grams >= 0)) throw new Error('weight needs grams >= 0');
-    const order = await handleEvent(String(order_id), ev);
-    if (order.status === 'paying_out') watchPayout(order.id);
-    return order;
+    return handleEvent(String(order_id), ev);
   });
 }

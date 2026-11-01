@@ -3,7 +3,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as db from './db.ts';
 import * as paypal from './paypal.ts';
-import { createOrder, authorize, handleEvent, syncPayout, type SensorEvent } from './orders.ts';
+import { createOrder, authorize, handleEvent, payoutSent, syncPayout, type SensorEvent } from './orders.ts';
 import { clamp, decide, type Fact } from './handoff.ts';
 
 delete process.env.LLM_API_KEY; // deterministic fallback
@@ -17,6 +17,7 @@ async function deliver(...evs: SensorEvent[]) {
   for (const ev of [{ type: 'loaded', compartment: 'A' }, { type: 'loaded', compartment: 'B' }, { type: 'arrived', floor: 23 }, ...evs] as SensorEvent[]) {
     await handleEvent(o.id, ev);
   }
+  await payoutSent(o.id); // payouts run after the reply
   await syncPayout(o.id); // mock batch is SUCCESS on first check
   const ledger = await db.listLedger(o.id);
   const sum = (kind: string, shop?: string) =>
@@ -122,8 +123,11 @@ test('clean handoff never waits on the LLM; unclear one does', async () => {
 test('payout stays pending until PayPal confirms the batch', async () => {
   const o = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }]);
   await authorize(o.id);
+  let reply;
   for (const ev of [{ type: 'loaded', compartment: 'A' }, { type: 'arrived' }, { type: 'door_opened', compartment: 'A' },
-    { type: 'weight', compartment: 'A', grams: 0 }, { type: 'door_closed', compartment: 'A' }] as SensorEvent[]) await handleEvent(o.id, ev);
+    { type: 'weight', compartment: 'A', grams: 0 }, { type: 'door_closed', compartment: 'A' }] as SensorEvent[]) reply = await handleEvent(o.id, ev);
+  assert.equal(reply!.status, 'captured'); // the reply comes back before payouts are sent
+  await payoutSent(o.id);
   assert.equal((await db.getOrder(o.id)).status, 'paying_out');
   const kinds = () => db.listLedger(o.id).then((l) => l.map((r) => r.kind));
   assert.ok((await kinds()).includes('payout_pending'));

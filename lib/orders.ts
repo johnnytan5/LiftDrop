@@ -1,7 +1,7 @@
 // Order state machine and money flow. The only place order status changes.
 
 import * as db from './db.ts';
-import type { Order, OrderStatus } from './db.ts';
+import type { Compartment, Order, OrderStatus } from './db.ts';
 import * as paypal from './paypal.ts';
 import { decide, toFacts, type Applied } from './handoff.ts';
 
@@ -77,14 +77,16 @@ export type SensorEvent =
   | { type: 'door_closed'; compartment: string }
   | { type: 'timeout' };
 
-// ponytail: in-process guard against two events settling the same order at once;
-// becomes a conditional UPDATE ... WHERE status='at_door' with Supabase.
+// In-process guard against two events settling the same order at once; updateOrder's
+// status precondition backs it up across processes.
 const settling = new Set<string>();
 
 export async function handleEvent(orderId: string, ev: SensorEvent) {
-  const order = await db.getOrder(orderId);
-  await db.insertEvent(orderId, ev.type, ev as unknown as Record<string, unknown>);
-  const comps = await db.getCompartments(orderId);
+  // Independent round trips in parallel; the event log write doesn't gate anything.
+  const [order, comps] = await Promise.all([
+    db.getOrder(orderId), db.getCompartments(orderId),
+    db.insertEvent(orderId, ev.type, ev as unknown as Record<string, unknown>),
+  ]);
   const has = (id: string) => {
     if (!comps.some((c) => c.id === id)) throw new Error(`order ${orderId} has no compartment ${id}`);
     return id;
@@ -95,7 +97,7 @@ export async function handleEvent(orderId: string, ev: SensorEvent) {
       const c = comps.find((x) => x.id === has(ev.compartment))!;
       await db.updateCompartment(orderId, c.id, { loaded: true, start_g: ev.grams ?? c.expected_g });
       let o = order.status === 'held' ? await move(order, 'collecting') : order;
-      if ((await db.getCompartments(orderId)).every((x) => x.loaded)) o = await move(o, 'en_route', { customer_message: 'On the way up.' });
+      if (comps.every((x) => x.id === c.id || x.loaded)) o = await move(o, 'en_route', { customer_message: 'On the way up.' });
       return o;
     }
     case 'arrived':
@@ -110,10 +112,10 @@ export async function handleEvent(orderId: string, ev: SensorEvent) {
       return order;
     case 'door_closed':
       atDoor(order);
-      return comps.every((c) => c.door_opened) ? handoff(orderId) : order;
+      return comps.every((c) => c.door_opened) ? handoff(order, comps) : order;
     case 'timeout':
       atDoor(order);
-      return handoff(orderId);
+      return handoff(order, comps);
     default:
       throw new Error(`unknown event ${(ev as { type: string }).type}`);
   }
@@ -123,51 +125,73 @@ function atDoor(order: Order) {
   if (order.status !== 'at_door') throw new Error(`order ${order.id} is ${order.status}, not at_door`);
 }
 
-export async function handoff(orderId: string) {
-  if (settling.has(orderId)) return db.getOrder(orderId);
+async function handoff(order: Order, comps: Compartment[]) {
+  const orderId = order.id;
+  if (settling.has(orderId)) return order;
   settling.add(orderId);
   try {
-    const order = await db.getOrder(orderId);
-    if (order.status !== 'at_door') return order;
-    const [comps, orderItems, items, past] = await Promise.all([
-      db.getCompartments(orderId), db.getOrderItems(orderId), db.listItems(), db.listDecisions(orderId),
-    ]);
+    const [orderItems, items, past] = await Promise.all([db.getOrderItems(orderId), db.listItems(), db.listDecisions(orderId)]);
     const facts = toFacts(comps, orderItems, items);
     const waits = past.filter((d) => (d.applied as Applied).action === 'wait').length;
     const { proposed, applied, source } = await decide(facts, waits);
-    await db.insertDecision({ order_id: orderId, facts, proposed, applied, source, reason: applied.reason });
-    if (applied.action === 'wait') return db.updateOrder(orderId, { customer_message: applied.customer_message });
-    return settle(order, applied);
+    const log = db.insertDecision({ order_id: orderId, facts, proposed, applied, source, reason: applied.reason });
+    const next = applied.action === 'wait'
+      ? db.updateOrder(orderId, { customer_message: applied.customer_message })
+      : settle(order, applied);
+    return (await Promise.all([next, log]))[0];
   } finally {
     settling.delete(orderId);
   }
 }
 
+/** Charge or release, then reply. Shop payouts run after the reply (PayPal takes ~20 s anyway). */
 async function settle(order: Order, d: Applied) {
   const id = order.id;
   try {
     if (d.action === 'void') {
       await paypal.voidAuthorization(order.authorization_id!, `liftdrop-${id}-void`);
-      await db.insertLedger([{ order_id: id, shop_id: null, kind: 'voided', amount_cents: order.total_cents, paypal_ref: order.authorization_id }]);
-      return move(order, 'voided', { customer_message: d.customer_message });
+      const [, voided] = await Promise.all([
+        db.insertLedger([{ order_id: id, shop_id: null, kind: 'voided', amount_cents: order.total_cents, paypal_ref: order.authorization_id }]),
+        move(order, 'voided', { customer_message: d.customer_message }),
+      ]);
+      return voided;
     }
 
     const cap = await paypal.captureAuthorization(order.authorization_id!, d.amount_cents, `liftdrop-${id}-capture`);
     const rest = order.total_cents - d.amount_cents;
-    await db.insertLedger([
-      { order_id: id, shop_id: null, kind: 'captured', amount_cents: d.amount_cents, paypal_ref: cap.id },
-      ...(rest > 0 ? [{ order_id: id, shop_id: null, kind: 'voided' as const, amount_cents: rest, paypal_ref: order.authorization_id }] : []),
+    const [, captured] = await Promise.all([
+      db.insertLedger([
+        { order_id: id, shop_id: null, kind: 'captured', amount_cents: d.amount_cents, paypal_ref: cap.id },
+        ...(rest > 0 ? [{ order_id: id, shop_id: null, kind: 'voided' as const, amount_cents: rest, paypal_ref: order.authorization_id }] : []),
+      ]),
+      move(order, rest > 0 ? 'partially_captured' : 'captured', {
+        captured_cents: d.amount_cents, capture_id: cap.id, customer_message: d.customer_message,
+      }),
     ]);
-    const captured = await move(order, rest > 0 ? 'partially_captured' : 'captured', {
-      captured_cents: d.amount_cents, capture_id: cap.id, customer_message: d.customer_message,
-    });
-    return payShops(captured, d.charge_compartments);
+    startPayout(captured, d.charge_compartments);
+    return captured;
   } catch (e) {
-    const fresh = await db.getOrder(id);
-    await db.insertEvent(id, 'error', { message: String(e) });
-    if (NEXT[fresh.status].includes('failed')) await move(fresh, 'failed');
+    await fail(id, e);
     throw e;
   }
+}
+
+async function fail(id: string, e: unknown) {
+  const [fresh] = await Promise.all([db.getOrder(id), db.insertEvent(id, 'error', { message: String(e) })]);
+  if (NEXT[fresh.status].includes('failed')) await move(fresh, 'failed');
+}
+
+// ponytail: background work lives in this process (single Render instance), like the payout poller.
+const payoutJobs = new Map<string, Promise<void>>();
+/** Resolves once the payout batch for this order has been sent (or failed). For tests and scripts. */
+export const payoutSent = (orderId: string) => payoutJobs.get(orderId) ?? Promise.resolve();
+
+function startPayout(order: Order, charged: string[]) {
+  const job = payShops(order, charged)
+    .then((o) => watchPayout(o.id))
+    .catch((e) => { console.error(`payout ${order.id}:`, e); return fail(order.id, e); })
+    .finally(() => payoutJobs.delete(order.id));
+  payoutJobs.set(order.id, job);
 }
 
 export function splitPayouts(comps: { shop_id: string; value_cents: number }[], shops: db.Shop[]) {
@@ -181,19 +205,22 @@ export function splitPayouts(comps: { shop_id: string; value_cents: number }[], 
 }
 
 async function payShops(order: Order, charged: string[]) {
-  const comps = (await db.getCompartments(order.id)).filter((c) => charged.includes(c.id));
-  const split = splitPayouts(comps, await db.listShops());
+  const [allComps, shops] = await Promise.all([db.getCompartments(order.id), db.listShops()]);
+  const split = splitPayouts(allComps.filter((c) => charged.includes(c.id)), shops);
   const sandbox = process.env.PAYPAL_MODE === 'sandbox';
   const items = split.map((s) => {
     if (!s.shop.payout_email && sandbox) throw new Error(`shop ${s.shop.id} has no payout email`);
     return { shop_id: s.shop.id, email: s.shop.payout_email ?? `${s.shop.id}@example.com`, cents: s.net };
   });
   const batch = await paypal.createPayout(`liftdrop-${order.id}-payout`, items);
-  await db.insertLedger(split.flatMap((s) => [
-    { order_id: order.id, shop_id: s.shop.id, kind: 'fee' as const, amount_cents: s.fee, paypal_ref: null },
-    { order_id: order.id, shop_id: s.shop.id, kind: 'payout_pending' as const, amount_cents: s.net, paypal_ref: batch.batchId },
-  ]));
-  return move(order, 'paying_out', { payout_batch_id: batch.batchId });
+  const [, paying] = await Promise.all([
+    db.insertLedger(split.flatMap((s) => [
+      { order_id: order.id, shop_id: s.shop.id, kind: 'fee' as const, amount_cents: s.fee, paypal_ref: null },
+      { order_id: order.id, shop_id: s.shop.id, kind: 'payout_pending' as const, amount_cents: s.net, paypal_ref: batch.batchId },
+    ])),
+    move(order, 'paying_out', { payout_batch_id: batch.batchId }),
+  ]);
+  return paying;
 }
 
 /** Ask PayPal once; on a terminal batch, record what landed and finish the order. */
@@ -221,14 +248,14 @@ export function watchPayout(orderId: string, everyMs = 3000, maxTries = 60) {
   const tick = async () => {
     try {
       const o = await syncPayout(orderId);
-      if (o.status === 'paying_out' && ++tries < maxTries) return void setTimeout(tick, everyMs);
+      if (o.status === 'paying_out' && ++tries < maxTries) return void setTimeout(tick, everyMs).unref();
     } catch (e) {
       console.error(`payout sync ${orderId}:`, e);
-      if (++tries < maxTries) return void setTimeout(tick, everyMs);
+      if (++tries < maxTries) return void setTimeout(tick, everyMs).unref();
     }
     watching.delete(orderId);
   };
-  setTimeout(tick, everyMs);
+  setTimeout(tick, everyMs).unref(); // unref: never keeps a script or test process alive
 }
 
 export async function syncPendingPayouts() {
