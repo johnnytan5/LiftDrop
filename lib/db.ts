@@ -27,7 +27,7 @@ export type LedgerRow = {
 };
 export type Decision = {
   id: number; order_id: string; facts: unknown; proposed: unknown; applied: unknown;
-  source: 'llm' | 'fallback'; reason: string; at: string;
+  source: 'code' | 'llm' | 'fallback'; reason: string; at: string;
 };
 
 const sb = process.env.SUPABASE_URL

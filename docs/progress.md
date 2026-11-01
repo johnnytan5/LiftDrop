@@ -21,7 +21,9 @@
 - [ ] PayPal sandbox: `PAYPAL_MODE=sandbox`, client id/secret, shop payout emails; check `final_capture` releases the rest; enable Payouts
 - [x] LLM key set (Muse Spark replies in ~1.8 s)
 - [x] Handoff agent verified on the ambiguous case via Muse (wait, then charge A only)
-- [ ] Handoff decision takes ~5–6 s with Muse; hide behind "Verifying handoff…" or start the call on door_closed
+- [x] Clean handoffs decided by code instantly (source `code`); only ambiguous ones call the agent (~4–6 s on Muse)
+- [ ] Show "Verifying handoff…" on the order page while the agent decides
+- [ ] Benchmark OpenRouter gpt-6-luna vs Muse (needs OPENROUTER key in .env)
 - [ ] Devpost pages (needs Claude in Chrome connected)
 
 ## Next (no credentials needed)

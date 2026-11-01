@@ -105,7 +105,16 @@ Rules: charge only compartments whose removed=true. removed="ambiguous" means th
 "void" charges nothing. Customer message: plain, friendly, say what was charged and what wasn't, amounts in USD.
 Always answer by calling decide_handoff exactly once; never reply with plain text.`;
 
-export async function decide(facts: Fact[], waits: number): Promise<{ proposed: Proposal; applied: Applied; source: 'llm' | 'fallback' }> {
+export type Source = 'code' | 'llm' | 'fallback';
+
+/** Clean handoffs (every compartment clearly taken or untouched) are plain arithmetic: decided by
+ *  code instantly so the capture lands the moment the bag is lifted. Only unclear ones go to the agent. */
+export async function decide(facts: Fact[], waits: number): Promise<{ proposed: Proposal; applied: Applied; source: Source }> {
+  const clean = facts.every((f) => f.removed !== 'ambiguous');
+  if (clean) {
+    const applied = fallback(facts, waits);
+    return { proposed: applied, applied, source: 'code' };
+  }
   if (llmConfigured()) {
     try {
       const proposed = await callTool<Proposal>(SYSTEM, JSON.stringify({ facts, waits_used: waits, max_waits: MAX_WAITS }), TOOL);

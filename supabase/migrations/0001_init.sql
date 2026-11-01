@@ -82,7 +82,7 @@ create table decisions (
   facts jsonb not null,
   proposed jsonb not null,             -- what the agent asked for
   applied jsonb not null,              -- what code allowed
-  source text not null,                -- 'llm' | 'fallback'
+  source text not null,                -- 'code' (clean handoff) | 'llm' | 'fallback' (llm failed)
   reason text not null,
   at timestamptz not null default now()
 );

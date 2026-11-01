@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as db from './db.ts';
 import * as paypal from './paypal.ts';
 import { createOrder, authorize, handleEvent, type SensorEvent } from './orders.ts';
-import { clamp, type Fact } from './handoff.ts';
+import { clamp, decide, type Fact } from './handoff.ts';
 
 delete process.env.LLM_API_KEY; // deterministic fallback
 delete process.env.PAYPAL_MODE;
@@ -101,4 +101,19 @@ test('state machine rejects out-of-order events; paypal failure marks order fail
   paypal.setMockFailure('capture');
   await assert.rejects(handleEvent(o.id, { type: 'door_closed', compartment: 'A' }), /mock capture failure/);
   assert.equal((await db.getOrder(o.id)).status, 'failed');
+});
+
+test('clean handoff never waits on the LLM; unclear one does', async () => {
+  process.env.LLM_API_KEY = 'test';
+  process.env.LLM_BASE_URL = 'http://127.0.0.1:9'; // unreachable: an LLM call would fail -> 'fallback'
+  try {
+    const f = (compartment: string, removed: Fact['removed']): Fact => ({
+      compartment, removed, value_cents: 450, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true,
+    });
+    assert.equal((await decide([f('A', true), f('B', false)], 0)).source, 'code');
+    assert.equal((await decide([f('A', true), f('B', 'ambiguous')], 0)).source, 'fallback');
+  } finally {
+    delete process.env.LLM_API_KEY;
+    delete process.env.LLM_BASE_URL;
+  }
 });

@@ -125,7 +125,7 @@ export default function Dev() {
               const a = d.applied as { action: string; amount_cents: number; clamped: boolean };
               return (
                 <p key={d.id} style={{ fontSize: 14, background: '#f2f5ff', padding: 8, borderRadius: 6 }}>
-                  Agent ({d.source}): <strong>{a.action}</strong>{a.amount_cents ? ` ${$(a.amount_cents)}` : ''}
+                  {d.source === 'code' ? 'Rules' : 'Agent'} ({d.source}): <strong>{a.action}</strong>{a.amount_cents ? ` ${$(a.amount_cents)}` : ''}
                   {a.clamped && ' (clamped by guardrail)'} · {d.reason}
                 </p>
               );
