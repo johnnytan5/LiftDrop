@@ -3,10 +3,13 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as db from './db.ts';
 import * as paypal from './paypal.ts';
-import { createOrder, authorize, handleEvent, payoutSent, syncPayout, type SensorEvent } from './orders.ts';
+import { createOrder, authorize, handleEvent, payoutSent, syncPayout, claim, vendorLoaded, customerDone, type SensorEvent } from './orders.ts';
+import { suggestCart } from './assistant.ts';
 import { clamp, decide, type Fact } from './handoff.ts';
 
 delete process.env.LLM_API_KEY; // deterministic fallback
+delete process.env.OPENROUTER_API_KEY;
+delete process.env.LLM_BASE_URL;
 delete process.env.PAYPAL_MODE;
 
 beforeEach(() => { db.resetDb(); paypal.resetMock(); });
@@ -134,4 +137,53 @@ test('payout stays pending until PayPal confirms the batch', async () => {
   assert.ok(!(await kinds()).includes('paid_out'));
   assert.equal((await syncPayout(o.id)).status, 'paid_out');
   assert.equal((await db.listLedger(o.id)).find((r) => r.kind === 'paid_out')?.amount_cents, 405);
+});
+
+test('signals across devices: one sim tab claims, shop loads, customer taps done', async () => {
+  const o = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }, { item_id: 'iced-latte', qty: 1 }]);
+  await assert.rejects(claim(o.id, 'tab1'), /not waiting/); // not paid yet
+  await authorize(o.id);
+  assert.equal((await claim(o.id, 'tab1')).robot_session, 'tab1');
+  await assert.rejects(claim(o.id, 'tab2'), /not waiting/); // second tab loses
+
+  await vendorLoaded(o.id, 'A');
+  assert.ok((await db.getCompartments(o.id)).find((c) => c.id === 'A')!.vendor_loaded_at);
+  await assert.rejects(vendorLoaded(o.id, 'Z'), /no compartment/);
+
+  await assert.rejects(customerDone(o.id), /not at_door/);
+  for (const ev of [{ type: 'loaded', compartment: 'A' }, { type: 'loaded', compartment: 'B' }, { type: 'arrived' }, ...take('A'), { type: 'door_opened', compartment: 'B' }, { type: 'weight', compartment: 'B', grams: 450 }] as SensorEvent[]) await handleEvent(o.id, ev);
+  assert.ok((await customerDone(o.id)).customer_done_at);
+  const first = await handleEvent(o.id, { type: 'door_closed', compartment: 'B' }); // A taken, B untouched
+  assert.equal(first.status, 'partially_captured');
+  assert.equal(first.captured_cents, 450);
+  // A late door_closed after settling is ignored, not an error.
+  assert.notEqual((await handleEvent(o.id, { type: 'door_closed', compartment: 'B' })).status, 'at_door');
+  assert.equal((await db.listDecisions(o.id)).length, 1);
+  await payoutSent(o.id);
+});
+
+test('assistant without an LLM matches menu words and never invents items', async () => {
+  const r = await suggestCart('one croissant and an iced latte please');
+  assert.deepEqual(r.lines.map((l) => l.item_id).sort(), ['croissant', 'iced-latte']);
+  assert.equal((await suggestCart('a pizza')).lines.length, 0);
+});
+
+test('agent asks once: one decision per round at the door, the second round settles', async () => {
+  const o = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }, { item_id: 'iced-latte', qty: 1 }]);
+  await authorize(o.id);
+  const round = (aGrams: number) => [
+    { type: 'door_opened', compartment: 'A' }, { type: 'door_opened', compartment: 'B' },
+    { type: 'weight', compartment: 'A', grams: aGrams }, { type: 'weight', compartment: 'B', grams: 450 },
+    { type: 'door_closed', compartment: 'A' }, { type: 'door_closed', compartment: 'B' },
+  ] as SensorEvent[];
+  for (const ev of [{ type: 'loaded', compartment: 'A' }, { type: 'loaded', compartment: 'B' }, { type: 'arrived' }] as SensorEvent[]) await handleEvent(o.id, ev);
+  let r;
+  for (const ev of round(40)) r = await handleEvent(o.id, ev); // half the croissant's weight: unclear
+  assert.equal(r!.status, 'at_door');
+  assert.deepEqual((await db.listDecisions(o.id)).map((d) => (d.applied as { action: string }).action), ['wait']);
+  for (const ev of round(0)) r = await handleEvent(o.id, ev); // customer took it properly
+  assert.equal(r!.status, 'partially_captured');
+  assert.equal(r!.captured_cents, 450);
+  assert.equal((await db.listDecisions(o.id)).length, 2);
+  await payoutSent(o.id);
 });

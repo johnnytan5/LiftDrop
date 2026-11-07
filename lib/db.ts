@@ -13,10 +13,12 @@ export type Order = {
   id: string; location: string; status: OrderStatus; total_cents: number; captured_cents: number;
   paypal_order_id: string | null; authorization_id: string | null; capture_id: string | null;
   payout_batch_id: string | null; customer_message: string | null; created_at: string;
+  robot_session: string | null; customer_done_at: string | null;
 };
 export type Compartment = {
   order_id: string; id: string; shop_id: string; value_cents: number; expected_g: number;
-  loaded: boolean; door_opened: boolean; start_g: number | null; end_g: number | null;
+  loaded: boolean; door_opened: boolean; door_closed: boolean; start_g: number | null; end_g: number | null;
+  vendor_loaded_at: string | null;
 };
 export type OrderItem = { order_id: string; item_id: string; compartment_id: string; qty: number };
 export type Event = { id: number; order_id: string; type: string; payload: Record<string, unknown>; at: string };
@@ -101,6 +103,7 @@ export async function insertOrder(o: NewOrder, comps: Compartment[], items: Orde
   const order: Order = {
     ...o, status: 'created', captured_cents: 0, paypal_order_id: null, authorization_id: null,
     capture_id: null, payout_batch_id: null, customer_message: null, created_at: now(),
+    robot_session: null, customer_done_at: null,
   };
   db().orders.push(order);
   db().compartments.push(...comps);
@@ -128,6 +131,17 @@ export async function updateOrder(id: string, patch: Partial<Order>, from?: Orde
   if (!o) throw new Error(`order ${id} not found`);
   if (from && o.status !== from) throw new Error(`order ${id} changed concurrently (expected ${from})`);
   return { ...Object.assign(o, patch) };
+}
+
+/** First sim tab to ask drives the order; null if another tab already has it. */
+export async function claimOrder(id: string, session: string) {
+  if (sb) {
+    const rows = await q<Order[]>(sb.from('orders').update({ robot_session: session }).eq('id', id).eq('status', 'held').is('robot_session', null).select());
+    return rows[0] ?? null;
+  }
+  const o = db().orders.find((x) => x.id === id);
+  if (!o || o.status !== 'held' || o.robot_session) return null;
+  return { ...Object.assign(o, { robot_session: session }) };
 }
 
 export async function listOrdersByStatus(status: OrderStatus) {

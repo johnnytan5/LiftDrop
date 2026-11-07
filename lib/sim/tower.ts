@@ -54,6 +54,7 @@ export class Tower {
   private w = 0;
   private waiters: { cond: () => boolean; resolve: () => void }[] = [];
   private flags = new Set<string>();
+  private shown = { A: 0, B: 0 }; // display only: last reading taken while standing still
   private watching: Partial<Record<Comp, { reported: number; candidate: number; since: number }>> = {};
   private id: Record<string, number> = {};
   private mj: Mj;
@@ -101,9 +102,16 @@ export class Tower {
     const p = this.pose();
     return {
       phase: this.phase, time: this.time, x: p.x, y: p.y, z: p.z, yaw: p.yaw, floor: p.z > L23_Z / 2 ? 23 : 0,
-      lift: this.liftZ(), grams: { A: this.grams('A'), B: this.grams('B') },
+      lift: this.liftZ(), grams: this.displayGrams(),
       doors: { A: this.sensor('door_A'), B: this.sensor('door_B') },
     };
+  }
+
+  /** Load cells read acceleration too, so the live readout holds its last still reading while moving. */
+  private displayGrams() {
+    const still = Math.abs(this.v) < 0.02 && Math.abs(this.w) < 0.05 && Math.abs(this.liftTarget - this.liftCtrl) < 1e-3;
+    if (still) this.shown = { A: this.grams('A'), B: this.grams('B') };
+    return { ...this.shown };
   }
 
   // ---------- physics loop ----------
@@ -244,8 +252,10 @@ export class Tower {
     }
   }
 
-  async deliver(stops: Stop[], opts: { autoLoad?: boolean; doorTimeout?: number } = {}) {
-    const { autoLoad = true, doorTimeout = 45 } = opts;
+  /** awaitVerdict: after closing the doors, wait for raise('settled') or raise('reopen') (the
+   *  backend's handoff agent asked the customer to check a compartment) before leaving. */
+  async deliver(stops: Stop[], opts: { autoLoad?: boolean; doorTimeout?: number; awaitVerdict?: boolean } = {}) {
+    const { autoLoad = true, doorTimeout = 45, awaitVerdict = false } = opts;
     const route = VISIT_ORDER.flatMap((shop) => stops.filter((s) => s.shop === shop));
     this.stage(route);
 
@@ -275,21 +285,32 @@ export class Tower {
     this.phase = 'to pantry';
     await this.goto([L23.liftOut, L23.bend, L23.approach, L23.pantry], 0);
     this.emit({ type: 'arrived', floor: 23 });
-    this.phase = 'at door';
-    for (const s of route) {
-      await this.door(s.comp, true);
-      this.emit({ type: 'door_opened', compartment: s.comp });
-      const g = this.grams(s.comp);
-      this.watching[s.comp] = { reported: g, candidate: g, since: this.time };
+    let timedOut = false;
+    for (let round = 0; ; round++) {
+      this.phase = round ? 'at door, customer checking' : 'at door';
+      this.flags.delete('done');
+      for (const s of route) {
+        await this.door(s.comp, true);
+        this.emit({ type: 'door_opened', compartment: s.comp });
+        const g = this.grams(s.comp);
+        this.watching[s.comp] = { reported: g, candidate: g, since: this.time };
+      }
+      timedOut = await Promise.race([this.signal('done').then(() => false), this.sleep(doorTimeout).then(() => true)]);
+      await this.sleep(0.6); // let the last weight change settle and report
+      this.watching = {};
+      // Final reading per compartment, so an untouched one reads "still full", not "unknown".
+      for (const s of route) this.emit({ type: 'weight', compartment: s.comp, grams: this.grams(s.comp) });
+      for (const s of route) {
+        await this.door(s.comp, false);
+        if (!timedOut) this.emit({ type: 'door_closed', compartment: s.comp });
+      }
+      if (timedOut) this.emit({ type: 'timeout' });
+      if (!awaitVerdict) break;
+      this.phase = 'checking handoff';
+      const verdict = await Promise.race([this.signal('settled').then(() => 'settled'), this.signal('reopen').then(() => 'reopen'), this.sleep(60).then(() => 'settled')]);
+      this.flags.delete('settled'); this.flags.delete('reopen');
+      if (verdict === 'settled' || round >= 2) break;
     }
-    const timedOut = await Promise.race([this.signal('done').then(() => false), this.sleep(doorTimeout).then(() => true)]);
-    await this.sleep(0.6); // let the last weight change settle and report
-    this.watching = {};
-    for (const s of route) {
-      await this.door(s.comp, false);
-      if (!timedOut) this.emit({ type: 'door_closed', compartment: s.comp });
-    }
-    if (timedOut) this.emit({ type: 'timeout' });
 
     // 4. Home, returning anything left in a compartment to its shop.
     this.phase = 'returning';

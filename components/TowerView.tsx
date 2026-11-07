@@ -14,7 +14,7 @@ export type TowerStatus = {
   grams: { A: number; B: number }; doors: { A: number; B: number };
 };
 export type TowerHandle = {
-  deliver: (stops: Stop[], opts?: { autoLoad?: boolean; doorTimeout?: number }) => void;
+  deliver: (stops: Stop[], opts?: { autoLoad?: boolean; doorTimeout?: number; awaitVerdict?: boolean }) => void;
   take: (comp: 'A' | 'B', fraction?: number) => void;
   raise: (name: string) => void;
   speed: (x: number) => void;
@@ -25,7 +25,7 @@ const LABELS: [string, number, number, number][] = [
   ['Crumb Bakery', -4, 3.3, 2.3],
   ['Lobby · G', 3, -4.2, 1.4],
   ['Lift', 4.5, 0, 4.9],
-  ['Level 23 · Pantry', 2.2, -3.6, 5.0],
+  ['Level 23 · Pantry', 3.35, -2.75, 5.0],
 ];
 
 function label(text: string) {
@@ -64,7 +64,7 @@ export default function TowerView({ onReady, onStatus, onEvent, onDone, onError,
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     el.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#10141b');
+    scene.background = new THREE.Color('#1b2633');
     scene.add(new THREE.AmbientLight(0xffffff, 0.75));
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(-4, -6, 12);

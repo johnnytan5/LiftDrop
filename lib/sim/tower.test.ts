@@ -59,7 +59,9 @@ test('croissant taken, latte left: sensors report it and the latte goes back to 
   assert.ok(maxZ > 3.2, `robot never reached L23 (max z ${maxZ})`);
   assert.ok(brief.includes('arrived'));
   const weights = events.filter((e) => e.type === 'weight') as { compartment: string; grams: number }[];
-  assert.deepEqual(weights.map((w) => [w.compartment, w.grams < 10]), [['A', true]]); // only A changed, to ~0
+  // A drops to ~0 while the door is open; then the final reading per compartment at close.
+  assert.deepEqual(weights.map((w) => [w.compartment, w.grams < 10]), [['A', true], ['B', false], ['A', true]]);
+  assert.ok(Math.abs(weights[1].grams - 450) <= 10, `latte final ${weights[1].grams}`);
   assert.equal(brief.at(-1), 'timeout');
   assert.deepEqual(result.leftovers, ['B']);
 

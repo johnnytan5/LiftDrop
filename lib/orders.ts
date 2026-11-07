@@ -44,7 +44,7 @@ export async function createOrder(location: string, cart: CartLine[]) {
   const comps = shops.map((shop_id, i) => {
     const mine = lines.filter((l) => l.item.shop_id === shop_id);
     return {
-      order_id: id, id: COMPARTMENT_IDS[i], shop_id, loaded: false, door_opened: false, start_g: null, end_g: null,
+      order_id: id, id: COMPARTMENT_IDS[i], shop_id, loaded: false, door_opened: false, door_closed: false, start_g: null, end_g: null, vendor_loaded_at: null,
       value_cents: mine.reduce((s, l) => s + l.item.price_cents * l.qty, 0),
       expected_g: mine.reduce((s, l) => s + l.item.grams * l.qty, 0),
     };
@@ -100,25 +100,70 @@ export async function handleEvent(orderId: string, ev: SensorEvent) {
       if (comps.every((x) => x.id === c.id || x.loaded)) o = await move(o, 'en_route', { customer_message: 'On the way up.' });
       return o;
     }
-    case 'arrived':
-      return move(order, 'at_door', { customer_message: 'Arrived. Open the compartment and take your order.' });
+    case 'arrived': {
+      const o = await move(order, 'at_door', { customer_message: 'Arrived. Open the compartment and take your order.' });
+      watchDoor(orderId);
+      return o;
+    }
     case 'door_opened':
       atDoor(order);
-      await db.updateCompartment(orderId, has(ev.compartment), { door_opened: true });
+      await db.updateCompartment(orderId, has(ev.compartment), { door_opened: true, door_closed: false });
       return order;
     case 'weight':
       atDoor(order);
       await db.updateCompartment(orderId, has(ev.compartment), { end_g: ev.grams });
       return order;
-    case 'door_closed':
-      atDoor(order);
-      return comps.every((c) => c.door_opened) ? handoff(order, comps) : order;
+    case 'door_closed': {
+      if (order.status !== 'at_door') return order; // a late event after the order settled
+      const id = has(ev.compartment);
+      await db.updateCompartment(orderId, id, { door_closed: true });
+      // Decide once every opened door is shut again: one decision per round at the door.
+      const now = comps.map((c) => (c.id === id ? { ...c, door_closed: true } : c));
+      return now.every((c) => c.door_opened && c.door_closed) ? handoff(order, now) : order;
+    }
     case 'timeout':
       atDoor(order);
       return handoff(order, comps);
     default:
       throw new Error(`unknown event ${(ev as { type: string }).type}`);
   }
+}
+
+// ---------- signals from the phone, the shop and the sim tab ----------
+
+/** The sim tab that gets here first drives the order (two open tabs never both deliver it). */
+export async function claim(orderId: string, session: string) {
+  const o = await db.claimOrder(orderId, session.slice(0, 64));
+  if (!o) throw new Error(`order ${orderId} is not waiting for a robot`);
+  return o;
+}
+
+/** Shop staff tapped "Loaded"; the sim sees the flag and puts the bag in the compartment. */
+export async function vendorLoaded(orderId: string, compartment: string) {
+  const order = await db.getOrder(orderId);
+  if (!['held', 'collecting'].includes(order.status)) throw new Error(`order ${orderId} is ${order.status}, not collecting`);
+  if (!(await db.getCompartments(orderId)).some((c) => c.id === compartment)) throw new Error(`no compartment ${compartment}`);
+  await db.updateCompartment(orderId, compartment, { vendor_loaded_at: new Date().toISOString() });
+  return order;
+}
+
+/** Customer tapped "I've got it" on the phone; the sim closes the doors and the handoff runs. */
+export async function customerDone(orderId: string) {
+  const order = await db.getOrder(orderId);
+  atDoor(order);
+  // A new timestamp per tap: the robot closes its doors again after the agent asked for a check.
+  return db.updateOrder(orderId, { customer_done_at: new Date().toISOString() }, 'at_door');
+}
+
+// Backstop for a sim tab closed at the door: settle from what the sensors already reported.
+// ponytail: in-process timer (single backend instance); instrumentation.ts re-arms it on boot.
+export const DOOR_BACKSTOP_MS = 180_000;
+export function watchDoor(orderId: string, ms = DOOR_BACKSTOP_MS) {
+  setTimeout(async () => {
+    try {
+      if ((await db.getOrder(orderId)).status === 'at_door') await handleEvent(orderId, { type: 'timeout' });
+    } catch (e) { console.error(`door backstop ${orderId}:`, e); }
+  }, ms).unref();
 }
 
 function atDoor(order: Order) {

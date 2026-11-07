@@ -10,7 +10,7 @@
 
     Layout (x east, y north):
       lobby   dock (1,-2) · café counter (-1, 3.3) · bakery counter (-4, 3.3) · lift (4.5, 0)
-      L23     pantry table (2.2, -3.4), slab x 1..7
+      L23     pantry table (3.35, -2.75), robot parks at (2.4, -2.75), slab x 1..7
   -->
   <compiler autolimits="true"/>
   <option timestep="0.002"/>
@@ -105,9 +105,10 @@
     <geom class="static" pos="7 0 3.75" size="0.05 5 0.55" material="wall"/>
     <geom class="decor" pos="1 0 3.6" size="0.02 5 0.4" material="glass"/>
     <!-- Pantry: table where the customer collects, fridge, sign -->
-    <geom name="pantry_table" class="static" pos="2.2 -3.6 3.6" size="0.7 0.35 0.4" material="wood"/>
-    <geom class="decor" pos="1.4 -4.6 4.0" size="0.3 0.3 0.8" material="pantry"/>
-    <site name="pantry_drop" pos="2.2 -3.6 4.05" size="0.02" group="4"/>
+    <!-- Table east of where the robot parks (2.4, -2.75), so the overview camera (south-west) sees the robot. -->
+    <geom name="pantry_table" class="static" pos="3.35 -2.75 3.6" size="0.35 0.7 0.4" material="wood"/>
+    <geom class="decor" pos="6.5 -4.5 4.0" size="0.3 0.3 0.8" material="pantry"/> <!-- fridge, east wall: never between the camera and the robot -->
+    <site name="pantry_drop" pos="3.35 -2.75 4.05" size="0.02" group="4"/>
 
     <!-- ===== Bags: free bodies, parked on their counters until loaded ===== -->
     <body name="bag_A" pos="-4.3 3.3 0.95">

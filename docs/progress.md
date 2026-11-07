@@ -47,3 +47,24 @@
 - [ ] Look at `/sim` in a real browser (not yet seen rendered: Chrome extension disconnected)
 - [ ] Vendor "Loaded" from the vendor page instead of the /sim panel
 - [ ] Customer take/done from the phone order page instead of the /sim panel
+
+## 2026-11-08: consumer flow, split screen, shop tablet
+
+- `/` is the demo: the customer's phone (left) and the live MuJoCo tower (right). They only share the backend.
+  The sim claims a held order (first tab wins, `orders.robot_session`), delivers it, and forwards sensor events.
+- `/order` is the same phone app full screen, for a real phone. `/vendor?shop=` is the shop tablet: Loaded + earnings.
+- Order assistant (`lib/assistant.ts`, `/api/assistant`): the model picks menu ids and quantities only; prices from the DB.
+- Pay: PayPal JS SDK button (`intent=authorize`) in sandbox mode, a test-mode button in mock mode (`/api/config`).
+  Sandbox checked: the button opens `sandbox.paypal.com/checkoutnow` for the order our backend created. Approving needs
+  the sandbox buyer login (yours).
+- Cross-device signals (migrations 0003, 0004): `customer_done_at`, `vendor_loaded_at`, `door_closed`.
+- Fixes found by testing:
+  - Untouched compartment read as "unclear": the robot now reports a final weight for every compartment at close.
+  - Two door_closed events ran the handoff twice, so the second overrode the agent's "please check". Now one decision
+    per round, once every opened door has closed.
+  - Agent "wait": the robot used to drive off. It now reopens its doors and waits for the customer's second "Done".
+  - Live scale readout jumped while driving (load cells feel acceleration); it now holds the last still reading.
+  - Pantry table and fridge hid the robot from the camera at the door; moved.
+- Door backstop: if the sim tab closes at the door, the backend settles after 180 s from what the sensors reported.
+- Tests: `npm run check` (13, incl. headless MuJoCo delivery), `npm run e2e` (Chrome, 5 scenarios: partial take,
+  full take, nothing taken, shops load by hand, agent asks then charges). All pass on Supabase + mock PayPal + Luna.

@@ -4,9 +4,9 @@
  * (copied to public/ by scripts/sync-sim-assets.mjs) and the Tower controller from tower.ts.
  * Adapted from Concierge's dashboard/lib/sim/sim.worker.ts.
  *
- * in : { type: 'deliver', stops, autoLoad?, doorTimeout? }
+ * in : { type: 'deliver', stops, autoLoad?, doorTimeout?, awaitVerdict? }
  *      { type: 'take', comp, fraction? }   customer lifts a bag out (fraction < 1 = fault)
- *      { type: 'raise', name }             'done' (customer finished) or 'loaded:A' (vendor tapped Loaded)
+ *      { type: 'raise', name }             'done', 'loaded:A', or the backend's verdict: 'settled' | 'reopen'
  *      { type: 'speed', x }                sim-time multiplier for the demo
  * out: { type: 'static', ... }             once: what to draw for every geom
  *      { type: 'frame', xpos, xmat, status }   ~30 Hz
@@ -74,7 +74,7 @@ self.onmessage = (e: MessageEvent) => {
   if (msg.type === 'deliver') {
     if (busy) return post({ type: 'error', message: 'robot is already on a delivery' });
     busy = true;
-    tower.deliver(msg.stops, { autoLoad: msg.autoLoad, doorTimeout: msg.doorTimeout })
+    tower.deliver(msg.stops, { autoLoad: msg.autoLoad, doorTimeout: msg.doorTimeout, awaitVerdict: msg.awaitVerdict })
       .then((result) => post({ type: 'done', result }))
       .catch((err) => post({ type: 'error', message: String(err?.message ?? err) }))
       .finally(() => { busy = false; });
