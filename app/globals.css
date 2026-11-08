@@ -59,6 +59,15 @@ a { color: inherit; }
 .comp-tag { display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 6px; background: var(--ink); color: #fff; font-family: var(--font-signage); font-weight: 700; font-size: 15px; }
 
 /* ---------- robot stage ---------- */
+.cams { position: absolute; right: 14px; top: 76px; width: 230px; display: grid; gap: 8px; padding: 10px; border-radius: 14px; background: rgba(20, 28, 37, 0.9); box-shadow: inset 0 0 0 1px var(--slate-line); }
+.cams-head { font-family: var(--font-signage); font-weight: 600; font-size: 15px; color: var(--brass-soft); }
+.cam { margin: 0; display: grid; gap: 5px; }
+.cam-frame { position: relative; border-radius: 8px; overflow: hidden; }
+.cam-frame img { display: block; width: 100%; }
+.cam-box { position: absolute; border: 2px solid #4ade80; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); }
+.cam figcaption { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.cam .comp-tag { background: var(--brass); color: var(--ink); width: 20px; height: 20px; font-size: 13px; }
+@media (max-width: 760px) { .cams { width: 150px; } }
 .stage { position: absolute; inset: 0; overflow: hidden; color: #e6ecf2; }
 .stage-top { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; pointer-events: none; }
 .stage-top > * { pointer-events: auto; }

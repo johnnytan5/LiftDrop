@@ -205,6 +205,7 @@ function ShopMenu({ menu, cart, bump, blocked, shop, onBack, onBasket }: Shared 
 // ---------- basket ----------
 
 function Basket({ menu, cart, bump, blocked, config, onBack, onPaid, onError }: Shared & { config: Config | null; onBack: () => void; onPaid: (id: string) => void; onError: (m: string) => void }) {
+  const [mode, setMode] = useState<'hold' | 'charge'>('hold');
   const lines = cartLines(cart);
   const shops = cartShops(menu, cart).map((id) => menu.shops.find((s) => s.id === id)!);
   const total = cartTotal(menu, cart);
@@ -244,8 +245,13 @@ function Basket({ menu, cart, bump, blocked, config, onBack, onPaid, onError }: 
           <div><span>Tower delivery</span><span>Free</span></div>
           <div className="total-row"><span>Total</span><span>{$(total)}</span></div>
         </div>
-        <p className="cp-hold">PayPal holds {$(total)} now. You’re charged only for what you take out of the robot; anything you leave goes back to the shop.</p>
-        <div className="cp-paybar"><Pay lines={lines} config={config} label={`Pay with PayPal · ${$(total)}`} onStarted={onPaid} onError={onError} /></div>
+        <fieldset className="cp-modes">
+          <legend>How PayPal takes payment</legend>
+          <label className={mode === 'hold' ? 'on' : ''}><input type="radio" name="pay-mode" checked={mode === 'hold'} onChange={() => setMode('hold')} /><b>Pay on delivery</b><small>PayPal holds {$(total)}; you’re charged only for what you take.</small></label>
+          <label className={mode === 'charge' ? 'on' : ''}><input type="radio" name="pay-mode" checked={mode === 'charge'} onChange={() => setMode('charge')} /><b>Pay now</b><small>Charged {$(total)} today; anything you leave is refunded.</small></label>
+        </fieldset>
+        <p className="cp-hold">The robot’s scale and camera check what you take out. Anything you leave goes back to the shop.</p>
+        <div className="cp-paybar"><Pay lines={lines} config={config} mode={mode} label={`Pay with PayPal · ${$(total)}`} onStarted={onPaid} onError={onError} /></div>
       </>}
     </div>
   );
@@ -349,16 +355,24 @@ function Tracking({ d, shops, robot, onNew, onError }: { d: Detail; shops: Shop[
               );
             })}
           </ul>
-          <div className="receipt-rows">
-            <div className="receipt-row"><span>Held</span><span>{$(sum('held'))}</span></div>
-            <div className="receipt-row"><span>Released back to you</span><span>{$(sum('voided'))}</span></div>
-            <div className="receipt-row total"><span>Charged</span><strong>{$(sum('captured'))}</strong></div>
-          </div>
+          {order.payment_mode === 'charge' ? (
+            <div className="receipt-rows">
+              <div className="receipt-row"><span>Paid at order</span><span>{$(sum('captured'))}</span></div>
+              <div className="receipt-row"><span>Refunded to you</span><span>{$(sum('refunded'))}</span></div>
+              <div className="receipt-row total"><span>Charged</span><strong>{$(sum('captured') - sum('refunded'))}</strong></div>
+            </div>
+          ) : (
+            <div className="receipt-rows">
+              <div className="receipt-row"><span>Held</span><span>{$(sum('held'))}</span></div>
+              <div className="receipt-row"><span>Released back to you</span><span>{$(sum('voided'))}</span></div>
+              <div className="receipt-row total"><span>Charged</span><strong>{$(sum('captured'))}</strong></div>
+            </div>
+          )}
           <button className="cp-secondary" onClick={onNew}>Order again</button>
         </div>
       )}
       {step < 4 && order.status !== 'at_door' && (
-        <p className="cp-hold">{$(order.total_cents)} held by PayPal. Nothing is charged until you take your order.</p>
+        <p className="cp-hold">{order.payment_mode === 'charge' ? `${$(order.total_cents)} paid. Anything you don’t take is refunded.` : `${$(order.total_cents)} held by PayPal. Nothing is charged until you take your order.`}</p>
       )}
     </div>
   );

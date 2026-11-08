@@ -103,6 +103,15 @@
 .cp-secondary { width: 100%; height: 48px; border-radius: 999px; border: 1.5px solid var(--cp-coral); background: transparent; color: var(--cp-coral-deep) !important; font-weight: 700; }
 .cp-app .paypal-box { min-height: 50px; }
 
+/* payment mode */
+.cp-modes { border: 0; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+.cp-modes legend { font-size: 11px; font-weight: 600; color: var(--cp-soft); text-transform: uppercase; letter-spacing: 0.02em; padding: 0 4px 6px; }
+.cp-modes label { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; align-items: center; background: #fff; border-radius: 18px; padding: 10px 14px; box-shadow: var(--cp-shadow); cursor: pointer; }
+.cp-modes label.on { box-shadow: 0 0 0 2px var(--cp-coral), var(--cp-shadow); }
+.cp-modes input { grid-row: span 2; accent-color: var(--cp-coral); width: 18px; height: 18px; margin: 0; }
+.cp-modes b { font-size: 14px; }
+.cp-modes small { font-size: 12px; color: var(--cp-soft); line-height: 1.35; }
+
 /* tracking */
 .cp-track { gap: 18px; }
 .cp-trackhead { display: flex; gap: 16px; align-items: center; background: var(--cp-ink); color: #fff; border-radius: 26px; padding: 14px; }

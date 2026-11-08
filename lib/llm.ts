@@ -66,3 +66,23 @@ export async function callTool<T>(system: string, user: string, tool: ToolDef): 
   if (!call) throw new Error(`llm did not call ${tool.function.name}`);
   return JSON.parse(call.function.arguments) as T;
 }
+
+/** SAM 3.1 on Meta's Responses endpoint: a text prompt plus an image, answered with
+ *  <|box;...|> markers in the output text (parsed by lib/vision.ts). From MuseConcierge. */
+export async function segment(prompt: string, imageDataUrl: string, timeoutMs = 15000): Promise<string> {
+  const res = await fetch(`${SPARK.base}/responses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SPARK.key()}` },
+    body: JSON.stringify({
+      model: process.env.SAM_MODEL ?? 'sam-3.1',
+      stream: false,
+      metadata: { include_confidence: 'true' },
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: prompt }, { type: 'input_image', image_url: imageDataUrl }] }],
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const body = await res.text();
+  if (!res.ok) throw new Error(`sam ${res.status}: ${body.slice(0, 200)}`);
+  const j = JSON.parse(body);
+  return j.output_text ?? (j.output ?? []).flatMap((o: { content?: { text?: string }[] }) => o.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
+}

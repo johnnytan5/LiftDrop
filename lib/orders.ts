@@ -28,7 +28,8 @@ async function move(order: Order, to: OrderStatus, patch: Partial<Order> = {}) {
 const COMPARTMENT_IDS = ['A', 'B'];
 export type CartLine = { item_id: string; qty: number };
 
-export async function createOrder(location: string, cart: CartLine[]) {
+export async function createOrder(location: string, cart: CartLine[], paymentMode: db.PaymentMode = 'hold') {
+  if (paymentMode !== 'hold' && paymentMode !== 'charge') throw new Error(`bad payment mode ${paymentMode}`);
   const items = await db.listItems();
   if (!cart.length) throw new Error('empty cart');
   const lines = cart.map((l) => {
@@ -44,7 +45,7 @@ export async function createOrder(location: string, cart: CartLine[]) {
   const comps = shops.map((shop_id, i) => {
     const mine = lines.filter((l) => l.item.shop_id === shop_id);
     return {
-      order_id: id, id: COMPARTMENT_IDS[i], shop_id, loaded: false, door_opened: false, door_closed: false, start_g: null, end_g: null, vendor_loaded_at: null,
+      order_id: id, id: COMPARTMENT_IDS[i], shop_id, loaded: false, door_opened: false, door_closed: false, start_g: null, end_g: null, vendor_loaded_at: null, vision_before: null, vision_after: null,
       value_cents: mine.reduce((s, l) => s + l.item.price_cents * l.qty, 0),
       expected_g: mine.reduce((s, l) => s + l.item.grams * l.qty, 0),
     };
@@ -54,7 +55,7 @@ export async function createOrder(location: string, cart: CartLine[]) {
     order_id: id, item_id: l.item.id, qty: l.qty,
     compartment_id: comps.find((c) => c.shop_id === l.item.shop_id)!.id,
   }));
-  await db.insertOrder({ id, location, total_cents: total }, comps, orderItems);
+  await db.insertOrder({ id, location, total_cents: total, payment_mode: paymentMode }, comps, orderItems);
   const pp = await paypal.createOrder(total, `liftdrop-${id}-create`);
   return db.updateOrder(id, { paypal_order_id: pp.id });
 }
@@ -65,6 +66,12 @@ export async function authorize(orderId: string) {
   if (order.status !== 'created') return order; // idempotent for double clicks
   if (!order.paypal_order_id) throw new Error('order has no PayPal order');
   const { authorizationId } = await paypal.authorizeOrder(order.paypal_order_id, `liftdrop-${orderId}-authorize`);
+  if (order.payment_mode === 'charge') {
+    // Charge now: take the full amount up front; whatever isn't collected is refunded at the door.
+    const cap = await paypal.captureAuthorization(authorizationId, order.total_cents, `liftdrop-${orderId}-capture`);
+    await db.insertLedger([{ order_id: orderId, shop_id: null, kind: 'captured', amount_cents: order.total_cents, paypal_ref: cap.id }]);
+    return move(order, 'held', { authorization_id: authorizationId, capture_id: cap.id, captured_cents: order.total_cents, customer_message: 'Paid. Anything you don’t collect is refunded.' });
+  }
   await db.insertLedger([{ order_id: orderId, shop_id: null, kind: 'held', amount_cents: order.total_cents, paypal_ref: authorizationId }]);
   return move(order, 'held', { authorization_id: authorizationId, customer_message: 'Held, not charged.' });
 }
@@ -178,7 +185,7 @@ async function handoff(order: Order, comps: Compartment[]) {
     const [orderItems, items, past] = await Promise.all([db.getOrderItems(orderId), db.listItems(), db.listDecisions(orderId)]);
     const facts = toFacts(comps, orderItems, items);
     const waits = past.filter((d) => (d.applied as Applied).action === 'wait').length;
-    const { proposed, applied, source } = await decide(facts, waits);
+    const { proposed, applied, source } = await decide(facts, waits, order.payment_mode);
     const log = db.insertDecision({ order_id: orderId, facts, proposed, applied, source, reason: applied.reason });
     const next = applied.action === 'wait'
       ? db.updateOrder(orderId, { customer_message: applied.customer_message })
@@ -191,6 +198,7 @@ async function handoff(order: Order, comps: Compartment[]) {
 
 /** Charge or release, then reply. Shop payouts run after the reply (PayPal takes ~20 s anyway). */
 async function settle(order: Order, d: Applied) {
+  if (order.payment_mode === 'charge') return settleCharged(order, d);
   const id = order.id;
   try {
     if (d.action === 'void') {
@@ -215,6 +223,26 @@ async function settle(order: Order, d: Applied) {
     ]);
     startPayout(captured, d.charge_compartments);
     return captured;
+  } catch (e) {
+    await fail(id, e);
+    throw e;
+  }
+}
+
+/** Charge-now orders were paid in full at order time: refund what wasn't collected. */
+async function settleCharged(order: Order, d: Applied) {
+  const id = order.id;
+  const keep = d.action === 'void' ? 0 : d.amount_cents;
+  const refund = order.total_cents - keep;
+  try {
+    const ref = refund > 0 ? await paypal.refundCapture(order.capture_id!, refund, `liftdrop-${id}-refund`) : null;
+    const to = keep === 0 ? 'voided' : refund > 0 ? 'partially_captured' : 'captured';
+    const [, done] = await Promise.all([
+      ref ? db.insertLedger([{ order_id: id, shop_id: null, kind: 'refunded', amount_cents: refund, paypal_ref: ref.id }]) : null,
+      move(order, to, { captured_cents: keep, customer_message: d.customer_message }),
+    ]);
+    if (keep > 0) startPayout(done, d.charge_compartments);
+    return done;
   } catch (e) {
     await fail(id, e);
     throw e;

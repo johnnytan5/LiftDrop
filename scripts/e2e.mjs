@@ -13,6 +13,8 @@
 //   3. customer takes nothing and taps done -> nothing charged
 //   4. shops load by hand on /vendor   5. agent asks once on an unclear weight
 //   6. the two far shops (noodles + greens); a third shop's + is disabled
+//   7. pay now: full capture at order, $9.00 refunded for the latte left behind
+// Every handoff also uses the compartment cameras (SAM 3.1 via /api/vision).
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -135,6 +137,9 @@ await check(/croissant.*taken/i.test(items.join('|')) && /latte.*returned to sho
 await waitText(stage, /Shops paid\s*\$4\.05(?! …)/, 60_000, 'bakery payout of $4.05 confirmed');
 await docked();
 await check(/returned B to the shop/.test(await text('.events')), 'latte carried back to the café');
+const cams = (await stage.locator('.cam figcaption').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
+await check(cams.some((t) => /^A empty: taken/.test(t)) && cams.some((t) => /^B still there/.test(t)), `SAM 3.1 compartment cameras: ${cams.join(' | ')}`);
+await check(/camera A after: SAM 3\.1 sees 0 of 1/.test(await text('.events')) && /camera B after: SAM 3\.1 sees 1 of 1/.test(await text('.events')), 'camera checks logged before the doors closed');
 await shot('docked');
 
 // 2. Manual cart, take both.
@@ -224,6 +229,26 @@ await takeBag('A');
 await takeBag('B');
 await tapDone();
 await receipt({ headline: /Delivered/, charged: '$18.00', released: '$0.00' });
+await docked();
+
+// 7. Pay now: PayPal charges the full $13.50 at order; the latte is left, so $9.00 is refunded.
+log('--- scenario 7: pay now, refund what is left');
+await phone.getByRole('button', { name: 'Order again' }).click();
+for (const name of ['Butter croissant', 'Iced latte']) await phone.getByRole('button', { name: `Add ${name}` }).click();
+await phone.locator('.cp-cartbar').click();
+await phone.getByRole('radio', { name: /Pay now/ }).check();
+await phone.getByRole('button', { name: /Pay with PayPal/ }).click();
+await waitText(phone, /\$13\.50 paid\. Anything you don’t take is refunded/, 15_000, 'paid in full up front');
+await waitText(stage, /Paid now\s*\$13\.50/, 10_000, 'stage shows $13.50 captured at order');
+await waitText(phone, /Your robot is at the pantry/, 150_000, 'robot at the pantry');
+await takeBag('A');
+await tapDone();
+await waitText(phone, /Delivered/, 40_000, 'receipt: Delivered');
+await check(await moneyRow('Paid at order') === '$13.50', `paid at order $13.50 (got ${await moneyRow('Paid at order')})`);
+await check(await moneyRow('Refunded') === '$9.00', `refunded $9.00 (got ${await moneyRow('Refunded')})`);
+await check(await moneyRow('Charged') === '$4.50', `charged $4.50 net (got ${await moneyRow('Charged')})`);
+await check(/refunded \$9\.00/i.test(await text('.receipt-msg')), `receipt says: ${await text('.receipt-msg')}`);
+await shot('pay-now-receipt');
 await docked();
 
 const real = errors.filter((e) => !/Download the React DevTools|favicon|images\.unsplash\.com/.test(e));

@@ -18,18 +18,20 @@ function loadPayPal(clientId: string) {
   }));
 }
 
-export default function Pay({ lines, config, label, className = 'cp-pay', onStarted, onError }: {
-  lines: { item_id: string; qty: number }[]; config: Config | null; label: string; className?: string;
+export default function Pay({ lines, config, label, mode = 'hold', className = 'cp-pay', onStarted, onError }: {
+  lines: { item_id: string; qty: number }[]; config: Config | null; label: string; mode?: 'hold' | 'charge'; className?: string;
   onStarted: (id: string) => void; onError: (m: string) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const linesRef = useRef(lines);
   linesRef.current = lines;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const cb = useRef({ onStarted, onError }); // parent callbacks change identity; the PayPal button must not re-render
   cb.current = { onStarted, onError };
   const [busy, setBusy] = useState(false);
 
-  const create = useCallback(() => api<Order>('/api/orders', { location: 'L23-pantry', cart: linesRef.current }), []);
+  const create = useCallback(() => api<Order>('/api/orders', { location: 'L23-pantry', cart: linesRef.current, payment_mode: modeRef.current }), []);
 
   useEffect(() => {
     if (config?.mode !== 'sandbox' || !config.clientId || !box.current) return;

@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Gate } from '../lib/voice/gate.ts';
 import { openAsr } from '../lib/voice/asr.ts';
-import { speak } from '../lib/voice/tts.ts';
+import { hush, speak } from '../lib/voice/tts.ts';
 import { CallSession, type CallLog } from '../lib/call/session.ts';
 import { itemPhoto } from '../lib/menu-art.ts';
 import Pay from './Pay.tsx';
@@ -86,6 +86,7 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
       onSay: (t) => (stopped ? Promise.resolve() : speak(t, gate)),
       onEnd: () => { stop(); add({ who: 'system', text: 'Call ended.' }); setTimeout(() => onClose(), 1200); },
       onThinking: setThinking,
+      onHush: hush,
       onLog: (e: CallLog) => {
         if (e.kind === 'caller') add({ who: 'caller', text: e.text });
         else if (e.kind === 'agent') add({ who: 'agent', text: e.text });
@@ -124,7 +125,7 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
   const paid = (id: string) => {
     setApproved(true);
     onPaid(id);
-    session.current?.finish('Approved. PayPal is holding it, and you only pay for what you take out of the robot. Your robot is on its way to the shops now. Bye!');
+    session.current?.finish('Approved. Your robot is on its way. Bye!');
   };
 
   const lineItems = cartLines(cart);

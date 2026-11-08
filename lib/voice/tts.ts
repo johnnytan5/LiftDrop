@@ -5,6 +5,16 @@ import type { Gate } from './gate.ts';
 const START_AHEAD_S = 0.06; // a little runway so the first chunks don't underrun
 
 let ctx: AudioContext | null = null;
+let playing = new Set<AudioBufferSourceNode>();
+let cut = 0; // bumped by hush(): a reply still streaming stops scheduling audio
+
+/** Stop talking now (the caller approved mid-sentence). The interrupted reply resolves. */
+export function hush() {
+  cut++;
+  for (const s of playing) { try { s.stop(); } catch { /* not started yet */ } }
+  playing = new Set();
+  if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+}
 
 function browserVoice(text: string, gate: Gate): Promise<void> {
   return new Promise((resolve) => {
@@ -31,6 +41,7 @@ async function streamedVoice(text: string, gate: Gate): Promise<boolean> {
   await ctx.resume();
   const audio = ctx;
   const reader = res.body.getReader();
+  const mine = cut;
   let at = 0;
   let last: AudioBufferSourceNode | null = null;
   let spare: Uint8Array | null = null; // half a sample split across two chunks
@@ -41,6 +52,7 @@ async function streamedVoice(text: string, gate: Gate): Promise<boolean> {
     } catch {
       break; // cut off mid-reply: what already played stands
     }
+    if (mine !== cut) { void reader.cancel(); break; }
     if (chunk.done) break;
     const bytes: Uint8Array = spare ? new Uint8Array([...spare, ...chunk.value]) : chunk.value;
     const even = bytes.length - (bytes.length % 2);
@@ -55,11 +67,15 @@ async function streamedVoice(text: string, gate: Gate): Promise<boolean> {
     source.connect(audio.destination);
     at = Math.max(at, audio.currentTime + START_AHEAD_S);
     source.start(at);
+    playing.add(source);
+    source.onended = () => playing.delete(source);
     at += buffer.duration;
     last = source;
   }
+  if (mine !== cut) { gate.end(); return true; } // hushed: don't fall back to the browser voice
   if (!last) return false;
-  await new Promise<void>((resolve) => { last!.onended = () => resolve(); });
+  const end = last;
+  await new Promise<void>((resolve) => { end.onended = () => { playing.delete(end); resolve(); }; if (mine !== cut) resolve(); });
   gate.end();
   return true;
 }

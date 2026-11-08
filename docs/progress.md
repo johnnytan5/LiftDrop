@@ -68,3 +68,27 @@
 - Door backstop: if the sim tab closes at the door, the backend settles after 180 s from what the sensors reported.
 - Tests: `npm run check` (13, incl. headless MuJoCo delivery), `npm run e2e` (Chrome, 5 scenarios: partial take,
   full take, nothing taken, shops load by hand, agent asks then charges). All pass on Supabase + mock PayPal + Luna.
+
+## 2026-11-08 (later): Coral Plate design, voice order line, compartment cameras, pay now
+
+- Two more shops (migration 0005): Noodle House and Green Bowl, counters along the lobby's north wall. The robot still
+  has two compartments, so the cart, the call agent and `createOrder` all stop at two shops per order.
+- Phone app ported to the Halden Tower design, direction 3a "Coral Plate" (`app/coral.css`, `components/OrderApp.tsx`):
+  home with shops and dishes, shop menu, basket with the robot's route, tracking, door card and receipt.
+- Call your order (`components/CallScreen.tsx`, `lib/call/*`, `lib/voice/*`), pipeline adapted from MuseConcierge:
+  mic -> AssemblyAI Universal-Streaming (`/api/asr-token`) -> Muse Spark (`/api/call`, tools `update_basket`,
+  `checkout`, `order_status`, `end_call`; the two-shop rule is in code) -> AssemblyAI TTS (`/api/tts`). The caller
+  approves in the real PayPal button; the line says goodbye and the phone switches to tracking.
+- Compartment cameras (SAM 3.1, as in MuseConcierge's cabin check): `components/compartmentCam.ts` renders each
+  compartment with real-size dish models (only dishes whose bag is physically inside it), `/api/vision` asks SAM 3.1
+  per dish and stores the result (`vision_before` as the doors open, `vision_after` as they close; migration 0006).
+  The handoff combines scale and camera (`combine()` in `lib/handoff.ts`): both must say taken to charge; if they
+  disagree the agent asks; a failed SAM call never counts as taken. Bench: `/camera-check` (24/24, three runs:
+  every dish found alone and in pairs, nothing found once taken).
+- Payment modes (migration 0006 `orders.payment_mode`): "Pay on delivery" authorizes and captures only what was taken
+  (as before); "Pay now" captures the full amount at order time and refunds what was left (`paypal.refundCapture`).
+- Tests: `npm run check` 26 (call tools, camera verdicts, weight x camera table, pay-now refunds, mock refund limits);
+  `npm run e2e` 7 scenarios, scenario 1 ordered by voice through Chrome's fake mic (real AssemblyAI + Spark), scenario 7
+  pay now with a $9.00 refund. All pass on Supabase + mock PayPal + Muse Spark + SAM 3.1.
+- Not done: per-item charging inside one compartment (two dishes, one taken -> the agent asks; charge stays per
+  compartment). The old typed assistant (`/api/assistant`) is unused by the new UI.

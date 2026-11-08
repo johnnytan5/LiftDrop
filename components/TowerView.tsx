@@ -8,16 +8,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { SimEvent, Stop } from '../lib/sim/tower.ts';
+import { photograph } from './compartmentCam.ts';
 
 export type TowerStatus = {
   phase: string; time: number; x: number; y: number; z: number; yaw: number; floor: number; lift: number;
-  grams: { A: number; B: number }; doors: { A: number; B: number };
+  grams: { A: number; B: number }; doors: { A: number; B: number }; inSlot: { A: boolean; B: boolean };
 };
 export type TowerHandle = {
   deliver: (stops: Stop[], opts?: { autoLoad?: boolean; doorTimeout?: number; awaitVerdict?: boolean }) => void;
   take: (comp: 'A' | 'B', fraction?: number) => void;
   raise: (name: string) => void;
   speed: (x: number) => void;
+  /** The compartment camera's photo now: the dishes are drawn only if the bag is in the compartment. */
+  photo: (comp: 'A' | 'B', dishes: string[]) => string;
 };
 
 const LABELS: [string, number, number, number][] = [
@@ -95,6 +98,7 @@ export default function TowerView({ onReady, onStatus, onEvent, onDone, onError,
     ro.observe(el);
 
     const meshes: (THREE.Mesh | null)[] = [];
+    let last: TowerStatus | null = null;
     const robot = new THREE.Vector3(1, -2, 0.5);
 
     let ready = false; // local, not the `loading` state: this closure lives for the component's life
@@ -135,6 +139,7 @@ export default function TowerView({ onReady, onStatus, onEvent, onDone, onError,
           take: (comp, fraction) => worker.postMessage({ type: 'take', comp, fraction }),
           raise: (name) => worker.postMessage({ type: 'raise', name }),
           speed: (x) => worker.postMessage({ type: 'speed', x }),
+          photo: (comp, dishes) => photograph(renderer, last?.inSlot[comp] ? dishes : []),
         });
       } else if (msg.type === 'frame') {
         const { xpos, xmat } = msg;
@@ -144,6 +149,7 @@ export default function TowerView({ onReady, onStatus, onEvent, onDone, onError,
           const r = xmat.subarray(i * 9, i * 9 + 9);
           mesh.matrix.set(r[0], r[1], r[2], xpos[i * 3], r[3], r[4], r[5], xpos[i * 3 + 1], r[6], r[7], r[8], xpos[i * 3 + 2], 0, 0, 0, 1);
         }
+        last = msg.status;
         robot.set(msg.status.x, msg.status.y, msg.status.z + 0.4);
         cb.current.onStatus?.(msg.status);
       } else if (msg.type === 'event') cb.current.onEvent?.(msg.event);

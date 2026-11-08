@@ -65,12 +65,17 @@ export async function get(path: string) {
 // ---------- mock ----------
 
 type MockAuth = { amount: number; captured: number; closed: boolean };
-const m = globalThis as { __pp?: { seq: number; orders: Map<string, number>; auths: Map<string, MockAuth>; replies: Map<string, unknown>; fail: string | null } };
-const mock = () => (m.__pp ??= { seq: 0, orders: new Map(), auths: new Map(), replies: new Map(), fail: null });
+type MockCapture = { amount: number; refunded: number };
+const m = globalThis as { __pp?: { seq: number; orders: Map<string, number>; auths: Map<string, MockAuth>; captures: Map<string, MockCapture>; replies: Map<string, unknown>; fail: string | null } };
+const mock = () => {
+  const s = (m.__pp ??= { seq: 0, orders: new Map(), auths: new Map(), captures: new Map(), replies: new Map(), fail: null });
+  s.captures ??= new Map(); // a store made by older code survives dev hot reloads
+  return s;
+};
 const mid = (p: string) => `${p}${(++mock().seq).toString().padStart(6, '0')}MOCK`;
 
 /** Make the next mock call of this op throw (for fault demos and the self-check). */
-export function setMockFailure(op: 'capture' | 'void' | 'payout' | 'authorize' | null) { mock().fail = op; }
+export function setMockFailure(op: 'capture' | 'void' | 'payout' | 'authorize' | 'refund' | null) { mock().fail = op; }
 export function resetMock() { m.__pp = undefined; }
 
 function once<T>(requestId: string, op: string, fn: () => T): T {
@@ -117,11 +122,26 @@ export async function captureAuthorization(authId: string, cents: number, reques
     if (cents <= 0 || a.captured + cents > a.amount) throw new PayPalError('MAX_CAPTURE_AMOUNT_EXCEEDED', 'capture exceeds authorization');
     a.captured += cents;
     a.closed = true;
-    return { id: mid('CAP'), status: 'COMPLETED' };
+    const id = mid('CAP');
+    mock().captures.set(id, { amount: cents, refunded: 0 });
+    return { id, status: 'COMPLETED' };
   });
   const j = await call(`/v2/payments/authorizations/${authId}/capture`, {
     amount: { currency_code: 'USD', value: usd(cents) }, final_capture: true,
   }, requestId);
+  return { id: j.id, status: j.status };
+}
+
+/** Give back part (or all) of a completed capture: the "charge now" mode's undelivered items. */
+export async function refundCapture(captureId: string, cents: number, requestId: string): Promise<{ id: string; status: string }> {
+  if (mode() === 'mock') return once(requestId, 'refund', () => {
+    const c = mock().captures.get(captureId);
+    if (!c) throw new PayPalError('RESOURCE_NOT_FOUND', `no capture ${captureId}`);
+    if (cents <= 0 || c.refunded + cents > c.amount) throw new PayPalError('REFUND_AMOUNT_EXCEEDED', 'refund exceeds capture');
+    c.refunded += cents;
+    return { id: mid('REF'), status: 'COMPLETED' };
+  });
+  const j = await call(`/v2/payments/captures/${captureId}/refund`, { amount: { currency_code: 'USD', value: usd(cents) } }, requestId);
   return { id: j.id, status: j.status };
 }
 

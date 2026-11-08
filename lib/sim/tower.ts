@@ -17,7 +17,9 @@ export type SimEvent =
   | { type: 'door_opened'; compartment: Comp }
   | { type: 'weight'; compartment: Comp; grams: number }
   | { type: 'door_closed'; compartment: Comp }
-  | { type: 'timeout' };
+  | { type: 'timeout' }
+  // Doors about to close: the stage photographs the compartment now (not sent to the backend).
+  | { type: 'snapshot'; compartment: Comp };
 
 type XY = [number, number];
 
@@ -96,6 +98,13 @@ export class Tower {
     return Math.max(0, Math.round(Math.abs(this.sensor(`scale_${c}`, 2)) / 9.81 * 1000 - PLATE_TARE_G));
   }
 
+  /** Is the bag physically inside its compartment? What a compartment camera would see; never the scale. */
+  inSlot(c: Comp) {
+    const b = this.id[`body:bag_${c}`], [sx, sy, sz] = this.sitePos(`slot_${c}`);
+    const p = this.d.xpos.subarray(b * 3, b * 3 + 3);
+    return Math.hypot(p[0] - sx, p[1] - sy, p[2] - sz) < 0.15;
+  }
+
   doorOpen(c: Comp) { return this.sensor(`door_${c}`) > 0.25; }
   doorClosed(c: Comp) { return this.sensor(`door_${c}`) < 0.01; }
   liftZ() { return this.sensor('lift'); }
@@ -106,6 +115,7 @@ export class Tower {
       phase: this.phase, time: this.time, x: p.x, y: p.y, z: p.z, yaw: p.yaw, floor: p.z > L23_Z / 2 ? 23 : 0,
       lift: this.liftZ(), grams: this.displayGrams(),
       doors: { A: this.sensor('door_A'), B: this.sensor('door_B') },
+      inSlot: { A: this.inSlot('A'), B: this.inSlot('B') },
     };
   }
 
@@ -300,6 +310,7 @@ export class Tower {
       timedOut = await Promise.race([this.signal('done').then(() => false), this.sleep(doorTimeout).then(() => true)]);
       await this.sleep(0.6); // let the last weight change settle and report
       this.watching = {};
+      for (const s of route) this.emit({ type: 'snapshot', compartment: s.comp });
       // Final reading per compartment, so an untouched one reads "still full", not "unknown".
       for (const s of route) this.emit({ type: 'weight', compartment: s.comp, grams: this.grams(s.comp) });
       for (const s of route) {

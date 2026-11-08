@@ -73,7 +73,7 @@ test('ambiguous weight: wait once, then charge only the confirmed compartment', 
 
 test('guardrail: agent cannot charge unconfirmed compartments or wait forever', () => {
   const f = (compartment: string, removed: Fact['removed'], value_cents: number): Fact => ({
-    compartment, removed, value_cents, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true,
+    compartment, removed, value_cents, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true, weight: removed, camera: 'unknown',
   });
   const facts = [f('A', true, 450), f('B', 'ambiguous', 900)];
   const greedy = clamp({ action: 'charge', charge_compartments: ['A', 'B', 'Z'], customer_message: '', reason: '' }, facts, 0);
@@ -113,7 +113,7 @@ test('clean handoff never waits on the LLM; unclear one does', async () => {
   process.env.LLM_BASE_URL = 'http://127.0.0.1:9'; // unreachable: an LLM call would fail -> 'fallback'
   try {
     const f = (compartment: string, removed: Fact['removed']): Fact => ({
-      compartment, removed, value_cents: 450, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true,
+      compartment, removed, value_cents: 450, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true, weight: removed, camera: 'unknown',
     });
     assert.equal((await decide([f('A', true), f('B', false)], 0)).source, 'code');
     assert.equal((await decide([f('A', true), f('B', 'ambiguous')], 0)).source, 'fallback');

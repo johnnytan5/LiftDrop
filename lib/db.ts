@@ -2,6 +2,7 @@
 // otherwise an in-memory mock mirroring supabase/migrations/0001_init.sql (tests, offline dev).
 
 import { createClient } from '@supabase/supabase-js';
+import type { CameraCheck } from './vision.ts';
 
 export type OrderStatus =
   | 'created' | 'held' | 'collecting' | 'en_route' | 'at_door'
@@ -14,11 +15,15 @@ export type Order = {
   paypal_order_id: string | null; authorization_id: string | null; capture_id: string | null;
   payout_batch_id: string | null; customer_message: string | null; created_at: string;
   robot_session: string | null; customer_done_at: string | null;
+  payment_mode: PaymentMode;
 };
+/** hold: authorize, capture only what was taken. charge: capture all at order, refund what was left. */
+export type PaymentMode = 'hold' | 'charge';
 export type Compartment = {
   order_id: string; id: string; shop_id: string; value_cents: number; expected_g: number;
   loaded: boolean; door_opened: boolean; door_closed: boolean; start_g: number | null; end_g: number | null;
   vendor_loaded_at: string | null;
+  vision_before: CameraCheck | null; vision_after: CameraCheck | null;
 };
 export type OrderItem = { order_id: string; item_id: string; compartment_id: string; qty: number };
 export type Event = { id: number; order_id: string; type: string; payload: Record<string, unknown>; at: string };
@@ -96,7 +101,7 @@ export async function listItems() { return sb ? q<Item[]>(sb.from('items').selec
 // Time-based so ids (and the PayPal idempotency keys built from them) never repeat across resets.
 export async function newOrderId() { return `o_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`; }
 
-type NewOrder = Pick<Order, 'id' | 'location' | 'total_cents'>;
+type NewOrder = Pick<Order, 'id' | 'location' | 'total_cents' | 'payment_mode'>;
 
 export async function insertOrder(o: NewOrder, comps: Compartment[], items: OrderItem[]) {
   if (sb) {

@@ -20,7 +20,7 @@ export class CallSession {
   queue: Promise<void> = Promise.resolve();
   speech: Promise<void> = Promise.resolve();
   ctx: CallCtx;
-  hooks: { onSay(text: string): Promise<void>; onEnd(): void; onLog(e: CallLog): void; onThinking?(on: boolean): void; url?: string };
+  hooks: { onSay(text: string): Promise<void>; onEnd(): void; onLog(e: CallLog): void; onThinking?(on: boolean): void; onHush?(): void; url?: string };
 
   constructor(ctx: CallCtx, hooks: CallSession['hooks']) {
     this.ctx = ctx;
@@ -45,6 +45,7 @@ export class CallSession {
    *  turn still in flight (its lines are dropped once the call has ended). */
   finish(text: string) {
     this.finalLine = text; // queued lines that haven't started are skipped; this one is said next
+    this.hooks.onHush?.(); // and the one being said is cut off
     this.say(text, 0);
     void this.speech.then(() => this.end());
   }
