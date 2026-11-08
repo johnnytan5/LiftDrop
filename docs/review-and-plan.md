@@ -28,7 +28,7 @@ Strong concept, right core. "Money moves only on physical proof" is a clear, dem
 | 9 | **Refund (F4) is P0 but in no demo scene.** | Demote refund to P1; implement only if time. |
 | 10 | **Webhooks (F6).** ✅ Status pushed to UIs via Supabase Realtime instead of own WebSocket. Capture/void/payout responses are synchronous; payout items need polling anyway. | Skip webhooks. Poll `GET /v1/payments/payouts/{batch_id}` until terminal. |
 | 11 | **Robot sim is the schedule killer.** MuJoCo WASM + three.js + lift + compartments in one day (Nov 8). | Freeze the event contract first (§4). Sim v0 = fake buttons, v1 = kinematic three.js scene (scripted waypoints, sensors as numbers), v2 = MuJoCo only if Concierge already runs it. Judges score the money moment, not physics. |
-| 12 | **Prize targeting.** "Best Use of PayPal + AI" is also an honorable mention and fits this project best. AG Grid prize is the most winnable sponsor prize ($5k first). | Target Best Use of Agentic Commerce + PayPal + AI; make the operator console a real AG Grid (P0, cheap); AG Studio ops agent P1. |
+| 12 | **Prize targeting.** "Best Use of PayPal + AI" is also an honorable mention and fits this project best. AG Grid prize is the most winnable sponsor prize ($5k first). | Target Best Use of Agentic Commerce + PayPal + AI. **AG Grid dropped (Nov 8):** a data grid is overkill for a two-shop delivery robot and would eat time in a <3 min pitch; the live money panel on the stage and the /vendor earnings already show the numbers. Optional only if time is spare on Nov 11: swap the /vendor earnings table for AG Grid, kept out of the video. |
 | 13 | **Who pays PayPal fees** isn't stated. Shop payout = items − 10%; operator absorbs PayPal processing + payout fees. | One line in BRD business model; show the operator's net in the console. |
 | 14 | **Judges need to try it.** | README: a sandbox buyer login for the live demo, and a "demo mode" that auto-loads/delivers so judges don't need the vendor console. |
 
@@ -90,7 +90,6 @@ Verifier → per-compartment facts `{compartment, items, value, expected_g, star
 app/
   order/page.tsx          phone order page (?loc=L23-pantry), assistant, PayPal button, status
   vendor/[shop]/page.tsx  orders to pack, "Loaded", earnings
-  ops/page.tsx            AG Grid tables, SimView, fault buttons, decision log
   api/orders/...          create (PayPal order), authorize, status
   api/events/route.ts     sensor events -> verifier -> handoff
   api/assistant/route.ts  NL -> cart
@@ -124,7 +123,7 @@ State machine: `created → held → collecting → en_route → at_door → {ca
 - Nov 7: milestone, full lifecycle on sandbox by clicking
 - Nov 8: tower scene, 2 compartments, touch sensors, lift, sim bridge
 - Nov 9: handoff agent (Muse Spark) + order assistant + ambiguous faults
-- Nov 10: vendor + ops consoles (AG Grid); AG Studio only if done by 18:00
+- Nov 10: vendor console (done Nov 8); no ops console or AG Grid, time goes to product polish and the pitch
 - Nov 11: Render deploy, README (reuse disclosure, sandbox buyer login), video
 - Nov 12: submit by morning PT
 
