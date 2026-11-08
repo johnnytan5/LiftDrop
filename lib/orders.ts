@@ -26,6 +26,7 @@ async function move(order: Order, to: OrderStatus, patch: Partial<Order> = {}) {
 }
 
 const COMPARTMENT_IDS = ['A', 'B'];
+const usd = (c: number) => `$${(c / 100).toFixed(2)}`;
 export type CartLine = { item_id: string; qty: number };
 
 export async function createOrder(location: string, cart: CartLine[], paymentMode: db.PaymentMode = 'hold') {
@@ -329,6 +330,38 @@ export function watchPayout(orderId: string, everyMs = 3000, maxTries = 60) {
     watching.delete(orderId);
   };
   setTimeout(tick, everyMs).unref(); // unref: never keeps a script or test process alive
+}
+
+// A paid order no robot picked up in time (the robot only takes orders younger than this), or one
+// whose robot never finished (its tab closed before the door), would hold the customer's money
+// forever. Cancel it: release the hold, or refund a pay-now order. A trip takes ~2 minutes.
+export const UNCLAIMED_MS = 15 * 60_000;
+export const STUCK_MS = 30 * 60_000;
+let lastExpiry = 0;
+export async function expireUnclaimed(now = Date.now(), force = false) {
+  if (!force && now - lastExpiry < 30_000) return; // runs from /api/state polls; once every 30 s is plenty
+  lastExpiry = now;
+  const before = (await Promise.all((['held', 'collecting', 'en_route'] as const).map((st) => db.listOrdersByStatus(st)))).flat();
+  for (const o of before) {
+    const age = now - Date.parse(o.created_at);
+    if (age < (o.robot_session ? STUCK_MS : UNCLAIMED_MS) || settling.has(o.id)) continue;
+    settling.add(o.id);
+    try {
+      if (o.payment_mode === 'charge' && o.capture_id) {
+        const ref = await paypal.refundCapture(o.capture_id, o.total_cents, `liftdrop-${o.id}-refund`);
+        await db.insertLedger([{ order_id: o.id, shop_id: null, kind: 'refunded', amount_cents: o.total_cents, paypal_ref: ref.id }]);
+        await move(o, 'voided', { captured_cents: 0, customer_message: `No robot could take your order, so it was cancelled. Refunded ${usd(o.total_cents)}.` });
+      } else {
+        await paypal.voidAuthorization(o.authorization_id!, `liftdrop-${o.id}-void`);
+        await db.insertLedger([{ order_id: o.id, shop_id: null, kind: 'voided', amount_cents: o.total_cents, paypal_ref: o.authorization_id }]);
+        await move(o, 'voided', { customer_message: 'No robot could take your order, so it was cancelled. Nothing was charged.' });
+      }
+    } catch (e) {
+      await fail(o.id, e); // e.g. a mock authorization lost on restart: stop retrying it
+    } finally {
+      settling.delete(o.id);
+    }
+  }
 }
 
 export async function syncPendingPayouts() {

@@ -6,6 +6,9 @@ import { runTool, type CallCtx } from './tools.ts';
 
 const MAX_TOOL_ROUNDS = 4; // stops a model that keeps calling tools from looping
 const GOODBYE = 'Thanks for ordering with LiftDrop. Bye!';
+// The caller is clearly done. Spark sometimes asks "anything else?" again instead of checking out.
+const READY = /\b(that'?s (all|everything|it)|that is (all|everything|it)|nothing else|(i'?d like to|i want to|let me|ready to) pay|pay now|check ?out|send (the|my) robot)\b/i;
+const TAP = 'Tap Approve in PayPal on your screen. PayPal only holds the money; you pay just for what you take out of the robot.';
 
 export type CallLog =
   | { kind: 'caller'; text: string }
@@ -16,6 +19,7 @@ export type CallLog =
 export class CallSession {
   messages: ChatMessage[] = [];
   ended = false;
+  checkedOut = false;
   finalLine: string | null = null;
   queue: Promise<void> = Promise.resolve();
   speech: Promise<void> = Promise.resolve();
@@ -79,10 +83,22 @@ export class CallSession {
         this.hooks.onLog({ kind: 'tool', name: call.function.name, args, result });
         this.messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         if (call.function.name === 'end_call') hangUp = true;
+        if (call.function.name === 'checkout' && !('error' in result)) this.checkedOut = true;
       }
       if (hangUp) break;
     }
     this.hooks.onThinking?.(false);
+    if (!hangUp && !this.checkedOut && READY.test(text) && Object.keys(this.ctx.getCart()).length) {
+      const result = runTool('checkout', {}, this.ctx);
+      this.hooks.onLog({ kind: 'tool', name: 'checkout', args: { by: 'code: caller said they were done' }, result });
+      if (!('error' in result)) {
+        this.checkedOut = true;
+        this.speech = Promise.resolve(); // don't make them wait for "anything else?" to finish
+        this.hooks.onHush?.();
+        this.messages.push({ role: 'assistant', content: TAP });
+        this.say(TAP, 0);
+      }
+    }
     if (hangUp && !spoke) this.say(GOODBYE, 0);
     await this.speech;
     if (hangUp) this.end();

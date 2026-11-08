@@ -46,3 +46,22 @@ test('checkout needs a basket; it only shows the PayPal button, never pays', () 
   assert.equal(t.checkedOut(), true);
   assert.match((runTool('order_status', {}, t.c) as { error: string }).error, /No order/);
 });
+
+test('caller says they are done: the line checks out even if Spark only asks "anything else?"', async () => {
+  const { CallSession } = await import('./session.ts');
+  const t = ctx();
+  runTool('update_basket', { changes: [{ item_id: 'croissant', qty: 1 }] }, t.c);
+  const said: string[] = [];
+  const s = new CallSession(t.c, { onSay: async (x) => { said.push(x); }, onEnd: () => {}, onLog: () => {} });
+  s.complete = async () => ({ message: { role: 'assistant', content: 'Anything else for you?' }, ms: 1 });
+  await s.onCaller('That is everything, I would like to pay now.');
+  assert.equal(t.checkedOut(), true);
+  assert.match(said.at(-1)!, /Approve in PayPal/);
+  // An ordinary turn doesn't.
+  const u = ctx();
+  runTool('update_basket', { changes: [{ item_id: 'croissant', qty: 1 }] }, u.c);
+  const s2 = new CallSession(u.c, { onSay: async () => {}, onEnd: () => {}, onLog: () => {} });
+  s2.complete = async () => ({ message: { role: 'assistant', content: 'Sure.' }, ms: 1 });
+  await s2.onCaller('Can I also get a latte?');
+  assert.equal(u.checkedOut(), false);
+});

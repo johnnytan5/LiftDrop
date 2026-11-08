@@ -174,7 +174,8 @@ for (const [shop, comp, label] of [['cafe', 'B', 'Level G Café'], ['bakery', 'A
   await page.waitForTimeout(3000);
   await check(new RegExp(`loading at ${label}`).test(await text('.phase')), `still waiting at ${label} without the shop's tap`);
   await tablet.goto(new globalThis.URL(`/vendor?shop=${shop}`, URL).href);
-  await tablet.getByRole('button', { name: `Loaded into ${comp}` }).click();
+  // The robot's own order (others may be waiting for a free robot).
+  await tablet.locator('.vd-load.is-next').getByRole('button', { name: `Loaded into ${comp}` }).click();
   log(`${label} tapped "Loaded into ${comp}"`);
   if (shots) await tablet.screenshot({ path: `${shots}/${String(++n).padStart(2, '0')}-vendor-${shop}.png` });
 }

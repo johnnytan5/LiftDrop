@@ -109,3 +109,24 @@ test('mock PayPal refuses refunds beyond the capture', async () => {
   await assert.rejects(paypal.refundCapture(cap.id, 500, 'r-ref2'), /exceeds/);
   assert.deepEqual(await paypal.refundCapture(cap.id, 600, 'r-ref1'), await paypal.refundCapture(cap.id, 600, 'r-ref1')); // idempotent
 });
+
+test('a paid order no robot picks up is cancelled after 15 minutes: hold released or payment refunded', async () => {
+  const { expireUnclaimed, UNCLAIMED_MS } = await import('./orders.ts');
+  const hold = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }], 'hold');
+  const charge = await createOrder('L23-pantry', [{ item_id: 'iced-latte', qty: 1 }], 'charge');
+  const claimed = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }], 'hold');
+  for (const o of [hold, charge, claimed]) await authorize(o.id);
+  await db.updateOrder(claimed.id, { robot_session: 'tab-1' });
+  await expireUnclaimed(Date.now(), true); // too young: nothing happens
+  assert.equal((await db.getOrder(hold.id)).status, 'held');
+  await expireUnclaimed(Date.now() + UNCLAIMED_MS + 1000, true);
+  const [h, c, k] = await Promise.all([hold, charge, claimed].map((o) => db.getOrder(o.id)));
+  assert.equal(h.status, 'voided');
+  assert.match(h.customer_message!, /Nothing was charged/);
+  assert.equal(c.status, 'voided');
+  assert.equal((await db.listLedger(c.id)).filter((r) => r.kind === 'refunded').reduce((a, r) => a + r.amount_cents, 0), 900);
+  assert.equal(k.status, 'held'); // a robot has it: leave it alone
+  const { STUCK_MS } = await import('./orders.ts');
+  await expireUnclaimed(Date.now() + STUCK_MS + 1000, true); // its robot never finished
+  assert.equal((await db.getOrder(claimed.id)).status, 'voided');
+});
