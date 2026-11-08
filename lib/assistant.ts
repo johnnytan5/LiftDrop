@@ -23,15 +23,20 @@ const TOOL: ToolDef = {
 
 const SYSTEM = `You take food orders for LiftDrop, a robot that brings orders from the shops in the lobby up to the
 customer's floor. Pick items ONLY from the menu JSON by id, qty 1-5. If nothing on the menu fits, return no lines and
-say what is available. Never mention prices. Always answer by calling set_cart exactly once.`;
+say what is available. The robot carries from at most TWO shops per order: if the customer wants more,
+pick the two best-matching shops and say the rest needs a second order. Never mention prices. Always answer by calling set_cart exactly once.`;
 
 export type Suggestion = { lines: CartLine[]; reply: string; source: 'llm' | 'keywords' };
 
 export async function suggestCart(message: string): Promise<Suggestion> {
   const items = await db.listItems();
-  const clean = (lines: CartLine[]) => lines
-    .filter((l) => items.some((i) => i.id === l.item_id))
-    .map((l) => ({ item_id: l.item_id, qty: Math.min(5, Math.max(1, Math.round(Number(l.qty) || 1))) }));
+  const shopOf = (id: string) => items.find((i) => i.id === id)?.shop_id;
+  const clean = (lines: CartLine[]) => {
+    const real = lines.filter((l) => shopOf(l.item_id));
+    const shops = [...new Set(real.map((l) => shopOf(l.item_id)))].slice(0, 2); // two compartments, one shop each
+    return real.filter((l) => shops.includes(shopOf(l.item_id)))
+      .map((l) => ({ item_id: l.item_id, qty: Math.min(5, Math.max(1, Math.round(Number(l.qty) || 1))) }));
+  };
 
   if (llmConfigured()) {
     try {
@@ -44,6 +49,6 @@ export async function suggestCart(message: string): Promise<Suggestion> {
   }
   // ponytail: word match on item names; the LLM handles anything fuzzier.
   const text = message.toLowerCase();
-  const lines = items.filter((i) => i.name.toLowerCase().split(/\s+/).some((w) => w.length > 3 && text.includes(w))).map((i) => ({ item_id: i.id, qty: 1 }));
-  return { lines, reply: lines.length ? 'Added to your bag.' : 'Try the croissant, pain au chocolat, iced latte or americano.', source: 'keywords' };
+  const lines = clean(items.filter((i) => i.name.toLowerCase().split(/\s+/).some((w) => w.length > 3 && text.includes(w))).map((i) => ({ item_id: i.id, qty: 1 })));
+  return { lines, reply: lines.length ? 'Added to your bag.' : `Try the ${items.map((i) => i.name.toLowerCase()).join(', ')}.`, source: 'keywords' };
 }

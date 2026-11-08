@@ -187,3 +187,12 @@ test('agent asks once: one decision per round at the door, the second round sett
   assert.equal((await db.listDecisions(o.id)).length, 2);
   await payoutSent(o.id);
 });
+
+test('four shops, two compartments: orders and the assistant stop at two shops', async () => {
+  await assert.rejects(createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }, { item_id: 'iced-latte', qty: 1 }, { item_id: 'caesar', qty: 1 }]), /too many shops/);
+  const o = await createOrder('L23-pantry', [{ item_id: 'chicken-noodle', qty: 1 }, { item_id: 'fruit-cup', qty: 2 }]);
+  assert.equal(o.total_cents, 1250 + 2 * 550);
+  const s = await suggestCart('croissant, iced latte, caesar salad and dumplings');
+  const shops = new Set((await db.listItems()).filter((i) => s.lines.some((l) => l.item_id === i.id)).map((i) => i.shop_id));
+  assert.ok(shops.size >= 1 && shops.size <= 2, `assistant picked ${shops.size} shops`);
+});

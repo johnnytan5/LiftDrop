@@ -21,8 +21,10 @@ export type TowerHandle = {
 };
 
 const LABELS: [string, number, number, number][] = [
-  ['Level G Café', -1, 3.3, 2.3],
-  ['Crumb Bakery', -4, 3.3, 2.3],
+  ['Level G Café', 0.1, 4.7, 2.25],
+  ['Crumb Bakery', -1.95, 4.7, 2.25],
+  ['Noodle House', -4, 4.7, 2.25],
+  ['Green Bowl', -6.05, 4.7, 2.25],
   ['Lobby · G', 3, -4.2, 1.4],
   ['Lift', 4.5, 0, 4.9],
   ['Level 23 · Pantry', 3.35, -2.75, 5.0],

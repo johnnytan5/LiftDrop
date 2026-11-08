@@ -60,12 +60,18 @@ function seed(): Store {
     shops: [
       { id: 'bakery', name: 'Crumb Bakery', fee_bps: 1000, payout_email: null },
       { id: 'cafe', name: 'Level G Café', fee_bps: 1000, payout_email: null },
+      { id: 'noodles', name: 'Noodle House', fee_bps: 1000, payout_email: null },
+      { id: 'greens', name: 'Green Bowl', fee_bps: 1000, payout_email: null },
     ],
     items: [
       { id: 'croissant', shop_id: 'bakery', name: 'Butter croissant', price_cents: 450, grams: 80, stock: 20 },
       { id: 'pain-choc', shop_id: 'bakery', name: 'Pain au chocolat', price_cents: 500, grams: 90, stock: 15 },
       { id: 'iced-latte', shop_id: 'cafe', name: 'Iced latte', price_cents: 900, grams: 450, stock: 30 },
       { id: 'americano', shop_id: 'cafe', name: 'Hot americano', price_cents: 600, grams: 350, stock: 30 },
+      { id: 'chicken-noodle', shop_id: 'noodles', name: 'Chicken noodle soup', price_cents: 1250, grams: 600, stock: 20 },
+      { id: 'dumplings', shop_id: 'noodles', name: 'Pork dumplings (6)', price_cents: 950, grams: 250, stock: 25 },
+      { id: 'caesar', shop_id: 'greens', name: 'Chicken caesar salad', price_cents: 1100, grams: 350, stock: 15 },
+      { id: 'fruit-cup', shop_id: 'greens', name: 'Fresh fruit cup', price_cents: 550, grams: 200, stock: 20 },
     ],
     orders: [], compartments: [], order_items: [], events: [], ledger: [], decisions: [], seq: 0,
   };

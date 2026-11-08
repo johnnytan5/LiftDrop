@@ -1,6 +1,6 @@
 <mujoco model="liftdrop_tower">
   <!--
-    LiftDrop tower: ground-floor retail (café + bakery counters) and level 23 (office pantry),
+    LiftDrop tower: ground-floor retail (four shop counters) and level 23 (office pantry),
     joined by a lift. Only these two floors are modelled; L23 is a slab 3.2 m above the lobby
     so a three-quarter camera sees both. Metres, z up, lobby floor at z=0.
 
@@ -9,7 +9,7 @@
     and sit flush with either floor.
 
     Layout (x east, y north):
-      lobby   dock (1,-2) · café counter (-1, 3.3) · bakery counter (-4, 3.3) · lift (4.5, 0)
+      lobby   dock (1,-2) · counters along y=3.3: café 0.1, bakery -1.95, noodles -4, greens -6.05 · lift (4.5, 0)
       L23     pantry table (3.35, -2.75), robot parks at (2.4, -2.75), slab x 1..7
   -->
   <compiler autolimits="true"/>
@@ -30,6 +30,8 @@
     <material name="wood" rgba="0.55 0.38 0.24 1"/>
     <material name="bakery" rgba="0.85 0.55 0.25 1"/>
     <material name="cafe" rgba="0.30 0.22 0.18 1"/>
+    <material name="noodles" rgba="0.70 0.18 0.15 1"/>
+    <material name="greens" rgba="0.35 0.60 0.30 1"/>
     <material name="pantry" rgba="0.25 0.55 0.45 1"/>
     <material name="shell_white" rgba="0.95 0.95 0.97 1"/>
     <material name="shell_grey" rgba="0.75 0.76 0.78 1"/>
@@ -61,15 +63,25 @@
     <geom class="static" pos="-7 0 0.6" size="0.05 5 0.6" material="wall"/>
     <geom class="static" pos="0 -5 0.3" size="7 0.05 0.3" material="glass"/>
 
+    <!-- Shop counters along the north wall, east to west; the robot stops at y=2.6 facing west. -->
     <!-- Café counter and back bar -->
-    <geom name="cafe_counter" class="static" pos="-1 3.3 0.45" size="0.9 0.3 0.45" material="cafe"/>
-    <geom class="decor" pos="-1 3.3 0.92" size="0.92 0.32 0.02" material="wood"/>
-    <geom class="decor" pos="-1 4.7 1.0" size="0.9 0.25 1.0" material="cafe"/>
-    <geom class="decor" type="cylinder" pos="-1.4 3.3 1.06" size="0.12 0.12" material="steel"/>
+    <geom name="cafe_counter" class="static" pos="0.1 3.3 0.45" size="0.8 0.3 0.45" material="cafe"/>
+    <geom class="decor" pos="0.1 3.3 0.92" size="0.82 0.32 0.02" material="wood"/>
+    <geom class="decor" pos="0.1 4.7 1.0" size="0.8 0.25 1.0" material="cafe"/>
+    <geom class="decor" type="cylinder" pos="-0.3 3.3 1.06" size="0.12 0.12" material="steel"/>
     <!-- Bakery counter with a glass display -->
-    <geom name="bakery_counter" class="static" pos="-4 3.3 0.45" size="0.9 0.3 0.45" material="bakery"/>
-    <geom class="decor" pos="-4 3.3 1.05" size="0.85 0.28 0.12" material="glass"/>
-    <geom class="decor" pos="-4 4.7 1.0" size="0.9 0.25 1.0" material="bakery"/>
+    <geom name="bakery_counter" class="static" pos="-1.95 3.3 0.45" size="0.8 0.3 0.45" material="bakery"/>
+    <geom class="decor" pos="-1.95 3.3 1.05" size="0.75 0.28 0.12" material="glass"/>
+    <geom class="decor" pos="-1.95 4.7 1.0" size="0.8 0.25 1.0" material="bakery"/>
+    <!-- Noodle counter with a steam pot -->
+    <geom name="noodles_counter" class="static" pos="-4 3.3 0.45" size="0.8 0.3 0.45" material="noodles"/>
+    <geom class="decor" pos="-4 3.3 0.92" size="0.82 0.32 0.02" material="wood"/>
+    <geom class="decor" pos="-4 4.7 1.0" size="0.8 0.25 1.0" material="noodles"/>
+    <geom class="decor" type="cylinder" pos="-3.6 3.35 1.05" size="0.16 0.12" material="steel"/>
+    <!-- Salad bar with a sneeze guard -->
+    <geom name="greens_counter" class="static" pos="-6.05 3.3 0.45" size="0.8 0.3 0.45" material="greens"/>
+    <geom class="decor" pos="-6.05 3.45 1.1" size="0.75 0.02 0.18" material="glass"/>
+    <geom class="decor" pos="-6.05 4.7 1.0" size="0.8 0.25 1.0" material="greens"/>
     <!-- Robot dock -->
     <geom class="decor" pos="1 -2 0.002" size="0.35 0.35 0.002" rgba="0.1 0.45 0.85 1"/>
 
@@ -111,12 +123,12 @@
     <site name="pantry_drop" pos="3.35 -2.75 4.05" size="0.02" group="4"/>
 
     <!-- ===== Bags: free bodies, parked on their counters until loaded ===== -->
-    <body name="bag_A" pos="-4.3 3.3 0.95">
+    <body name="bag_A" pos="-2.25 3.3 0.95">
       <freejoint name="bag_A"/>
       <inertial pos="0 0 0" mass="0.08" diaginertia="0.0002 0.0002 0.0002"/>
       <geom class="bag" rgba="0.95 0.85 0.55 1"/>
     </body>
-    <body name="bag_B" pos="-1.3 3.3 0.95">
+    <body name="bag_B" pos="-0.2 3.3 0.95">
       <freejoint name="bag_B"/>
       <inertial pos="0 0 0" mass="0.45" diaginertia="0.0006 0.0006 0.0006"/>
       <geom class="bag" rgba="0.55 0.38 0.25 1"/>
@@ -134,6 +146,6 @@
 
   <keyframe>
     <!-- robot(7) wheels(2) doors(2) lift(1) bag_A(7) bag_B(7) -->
-    <key name="home" qpos="1 -2 0.09 1 0 0 0  0 0  0 0  0  -4.3 3.3 0.95 1 0 0 0  -1.3 3.3 0.95 1 0 0 0"/>
+    <key name="home" qpos="1 -2 0.09 1 0 0 0  0 0  0 0  0  -2.25 3.3 0.95 1 0 0 0  -0.2 3.3 0.95 1 0 0 0"/>
   </keyframe>
 </mujoco>

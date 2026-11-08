@@ -9,7 +9,7 @@
 type Mj = any;
 
 export type Comp = 'A' | 'B';
-export type Shop = 'cafe' | 'bakery';
+export type Shop = 'cafe' | 'bakery' | 'noodles' | 'greens';
 export type Stop = { comp: Comp; shop: Shop; grams: number; label: string };
 export type SimEvent =
   | { type: 'loaded'; compartment: Comp; grams: number }
@@ -35,10 +35,12 @@ const LOBBY = { dock: [1, -2] as XY, corridor: [1, 2.6] as XY, liftDoor: [2.5, 0
 const L23 = { liftOut: [3.0, 0] as XY, bend: [1.7, -1.5] as XY, approach: [1.7, -2.75] as XY, pantry: [2.4, -2.75] as XY };
 // Stop on y=2.6 heading west: the compartments (robot's -y side) face the counter to the north.
 export const SHOPS: Record<Shop, { stop: XY; counter: [number, number, number] }> = {
-  cafe: { stop: [-1, 2.6], counter: [-1.3, 3.3, 0.95] },
-  bakery: { stop: [-4, 2.6], counter: [-4.3, 3.3, 0.95] },
+  cafe: { stop: [0.1, 2.6], counter: [-0.2, 3.3, 0.95] },
+  bakery: { stop: [-1.95, 2.6], counter: [-2.25, 3.3, 0.95] },
+  noodles: { stop: [-4, 2.6], counter: [-4.3, 3.3, 0.95] },
+  greens: { stop: [-6.05, 2.6], counter: [-6.35, 3.3, 0.95] },
 };
-const VISIT_ORDER: Shop[] = ['cafe', 'bakery']; // east to west along the counters
+const VISIT_ORDER: Shop[] = ['cafe', 'bakery', 'noodles', 'greens']; // east to west along the counters
 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 const clamp = (x: number, lim: number) => Math.max(-lim, Math.min(lim, x));

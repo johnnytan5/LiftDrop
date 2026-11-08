@@ -9,6 +9,8 @@
 //      -> charged $4.50, $9.00 released, latte returned to the café, bakery paid $4.05
 //   2. customer takes both -> charged in full
 //   3. customer takes nothing and taps done -> nothing charged
+//   4. shops load by hand on /vendor   5. agent asks once on an unclear weight
+//   6. the two far shops (noodles + greens); a third shop's + is disabled
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright-core';
 
@@ -162,6 +164,23 @@ if (await phone.getByText('One more check').count()) {
   log('agent settled without asking');
   await receipt({ headline: /Not delivered, not charged|Delivered/, charged: '$0.00', released: '$13.50' });
 }
+await docked();
+
+// 6. The two new shops at the far end of the lobby; a third shop can't be added.
+log('--- scenario 6: Noodle House + Green Bowl, third shop blocked');
+await phone.getByRole('button', { name: 'Order again' }).click();
+for (const name of ['Chicken noodle soup', 'Fresh fruit cup']) await phone.getByRole('button', { name: `Add ${name}` }).click();
+await check(await phone.getByRole('button', { name: 'Add Butter croissant' }).isDisabled(), 'third shop disabled: robot carries from two shops');
+await check(/\$18\.00/.test(await text('.total-row')), `cart total is $18.00 (${(await text('.total-row')).replace('\n', ' ')})`);
+await phone.getByRole('button', { name: /Pay with PayPal/ }).click();
+await waitText(stage, /loading at Noodle House/, 90_000, 'robot at Noodle House');
+await waitText(stage, /loading at Green Bowl/, 90_000, 'robot at Green Bowl');
+await waitText(phone, /Your robot is at the pantry/, 150_000, 'robot at the pantry');
+await shot('new-shops-at-door');
+await takeBag('A');
+await takeBag('B');
+await tapDone();
+await receipt({ headline: /Delivered/, charged: '$18.00', released: '$0.00' });
 await docked();
 
 const real = errors.filter((e) => !/Download the React DevTools|favicon/.test(e));

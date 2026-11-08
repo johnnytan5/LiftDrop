@@ -65,7 +65,7 @@ export default function OrderApp({ robot = null }: { robot?: RobotLive }) {
       </header>
       {error && <p className="app-error" role="alert">{error}</p>}
       {!menu ? <p className="muted pad">Loading the menu…</p>
-        : orderId && detail ? <Tracking d={detail} robot={robot} onNew={reset} onError={setError} />
+        : orderId && detail ? <Tracking d={detail} shops={menu.shops} robot={robot} onNew={reset} onError={setError} />
         : orderId ? <p className="muted pad">Finding your order…</p>
         : <Shop menu={menu} cart={cart} setCart={setCart} config={config} onStarted={started} onError={setError} />}
     </div>
@@ -81,6 +81,9 @@ function Shop({ menu, cart, setCart, config, onStarted, onError }: {
   const lines = Object.entries(cart).filter(([, q]) => q > 0).map(([item_id, qty]) => ({ item_id, qty }));
   const total = lines.reduce((s, l) => s + (menu.items.find((i) => i.id === l.item_id)?.price_cents ?? 0) * l.qty, 0);
   const add = (id: string, d: number) => setCart({ ...cart, [id]: Math.max(0, Math.min(5, (cart[id] ?? 0) + d)) });
+  // The robot has two compartments, one per shop.
+  const inCart = new Set(lines.map((l) => menu.items.find((i) => i.id === l.item_id)?.shop_id));
+  const full = inCart.size >= 2;
 
   return (
     <div className="shop">
@@ -88,6 +91,7 @@ function Shop({ menu, cart, setCart, config, onStarted, onError }: {
       {menu.shops.map((shop) => (
         <section key={shop.id} className="menu-shop">
           <h2>{shop.name}</h2>
+          {full && !inCart.has(shop.id) && <p className="muted small">The robot carries from two shops per trip. Remove one to order here.</p>}
           {menu.items.filter((i) => i.shop_id === shop.id).map((i) => (
             <div key={i.id} className="menu-item">
               <div>
@@ -99,7 +103,7 @@ function Shop({ menu, cart, setCart, config, onStarted, onError }: {
                   <button aria-label={`One less ${i.name}`} onClick={() => add(i.id, -1)}>−</button>
                   <span aria-live="polite">{cart[i.id]}</span>
                 </>}
-                <button aria-label={`Add ${i.name}`} onClick={() => add(i.id, 1)}>+</button>
+                <button aria-label={`Add ${i.name}`} disabled={full && !inCart.has(i.shop_id)} onClick={() => add(i.id, 1)}>+</button>
               </div>
             </div>
           ))}
@@ -233,7 +237,7 @@ function Floor({ d, robot }: { d: Detail; robot: RobotLive }) {
   );
 }
 
-function Tracking({ d, robot, onNew, onError }: { d: Detail; robot: RobotLive; onNew: () => void; onError: (m: string) => void }) {
+function Tracking({ d, shops, robot, onNew, onError }: { d: Detail; shops: Shop[]; robot: RobotLive; onNew: () => void; onError: (m: string) => void }) {
   const { order, compartments, lines, ledger, decision } = d;
   const step = stepOf(d);
   const sum = (k: string) => ledger.filter((l) => l.kind === k).reduce((s, l) => s + l.amount_cents, 0);
@@ -244,7 +248,7 @@ function Tracking({ d, robot, onNew, onError }: { d: Detail; robot: RobotLive; o
   // The agent asked the customer to check a compartment, after their latest tap.
   const asked = order.status === 'at_door' && decision?.action === 'wait' && !!doneAt && Date.parse(decision.at) >= Date.parse(doneAt) && !pending;
   const checking = order.status === 'at_door' && !asked && (pending || !!doneAt);
-  const shopName = (id: string) => (id === 'bakery' ? 'Crumb Bakery' : id === 'cafe' ? 'Level G Café' : id);
+  const shopName = (id: string) => shops.find((s) => s.id === id)?.name ?? id;
   const waitingAt = compartments.find((c) => !c.loaded);
 
   const headline =
