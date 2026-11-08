@@ -1,28 +1,20 @@
 'use client';
 
-// The customer's phone: ask for food, pay (PayPal holds, doesn't charge), follow the robot,
-// take the bag, get a receipt for exactly what was taken. Used full screen at /order and
-// inside the phone frame on the split-screen home page.
+// The customer's phone (Coral Plate design): browse the four lobby shops or call the order line,
+// pay (PayPal holds, doesn't charge), follow the robot, take the bag, get a receipt for exactly
+// what was taken. Full screen at /order, inside the phone frame on the split-screen home page.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Compartment, Item, LedgerRow, Order, Shop } from '../lib/db.ts';
+import { useEffect, useState } from 'react';
+import type { Item, Shop } from '../lib/db.ts';
+import { byPopular, byShopOrder, HERO, itemPhoto, itemUnit, shopArt, shopPhoto } from '../lib/menu-art.ts';
+import Pay from './Pay.tsx';
+import CallScreen from './CallScreen.tsx';
+import { $, api, cartCount, cartLines, cartShops, cartTotal, DONE, headlineOf, MAX_SHOPS, type Cart, type Config, type Detail, type Menu } from './order-shared.ts';
 
-type Detail = { order: Order; compartments: Compartment[]; ledger: LedgerRow[]; decision: { action: string; charge_compartments: string[]; at: string } | null; lines: { item_id: string; compartment_id: string; qty: number; name: string }[] };
-type Menu = { items: Item[]; shops: Shop[] };
-type Config = { mode: 'mock' | 'sandbox'; clientId: string | null };
 export type RobotLive = { floor: number; phase: string } | null;
+type Screen = 'home' | 'shop' | 'basket' | 'call';
 
-const $ = (c: number) => `$${(c / 100).toFixed(2)}`;
 const KEY = 'liftdrop-order';
-const DONE = ['captured', 'partially_captured', 'paying_out', 'paid_out'];
-
-async function api<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, body === undefined ? { cache: 'no-store' } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const j = await res.json();
-  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
-  return j as T;
-}
-
 const store = {
   get: () => { try { return localStorage.getItem(KEY); } catch { return null; } },
   set: (v: string | null) => { try { if (v) localStorage.setItem(KEY, v); else localStorage.removeItem(KEY); } catch { /* private mode */ } },
@@ -31,13 +23,15 @@ const store = {
 export default function OrderApp({ robot = null }: { robot?: RobotLive }) {
   const [menu, setMenu] = useState<Menu | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
-  const [cart, setCart] = useState<Record<string, number>>({});
+  const [cart, setCart] = useState<Cart>({});
+  const [screen, setScreen] = useState<Screen>('home');
+  const [shopId, setShopId] = useState('noodles');
   const [orderId, setOrderId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api<Menu>('/api/state').then((s) => setMenu({ items: s.items, shops: s.shops })).catch((e) => setError(e.message));
+    api<Menu>('/api/state').then((s) => setMenu({ items: byPopular(s.items), shops: byShopOrder(s.shops) })).catch((e) => setError(e.message));
     api<Config>('/api/config').then(setConfig).catch(() => setConfig({ mode: 'mock', clientId: null }));
     setOrderId(store.get());
   }, []);
@@ -54,159 +48,206 @@ export default function OrderApp({ robot = null }: { robot?: RobotLive }) {
     return () => { stop = true; clearInterval(t); };
   }, [orderId]);
 
-  const started = (id: string) => { store.set(id); setOrderId(id); setCart({}); };
-  const reset = () => { store.set(null); setOrderId(null); setDetail(null); setError(''); };
+  const go = (s: Screen) => { setScreen(s); setError(''); };
+  const paid = (id: string) => { store.set(id); setOrderId(id); setCart({}); };
+  const reset = () => { store.set(null); setOrderId(null); setDetail(null); setError(''); go('home'); };
+
+  if (!menu) return <div className="cp-app"><p className="cp-pad cp-soft">Loading the shops…</p></div>;
+
+  // The robot has two compartments: once two shops are in the basket, the others wait.
+  const shopsIn = cartShops(menu, cart);
+  const blocked = (i: Item) => shopsIn.length >= MAX_SHOPS && !shopsIn.includes(i.shop_id);
+  const bump = (id: string, d: number) => setCart((c) => {
+    const q = Math.max(0, Math.min(5, (c[id] ?? 0) + d));
+    const n = { ...c };
+    if (q) n[id] = q; else delete n[id];
+    return n;
+  });
+  const shared = { menu, cart, bump, blocked };
+
+  let body;
+  if (screen === 'call') {
+    body = <CallScreen menu={menu} cart={cart} setCart={setCart} config={config} detail={detail} onPaid={paid} onClose={(next) => go(next ?? 'home')} />;
+  } else if (orderId && detail) {
+    body = <Tracking d={detail} shops={menu.shops} robot={robot} onNew={reset} onError={setError} />;
+  } else if (orderId) {
+    body = <p className="cp-pad cp-soft">Finding your order…</p>;
+  } else if (screen === 'shop') {
+    body = <ShopMenu {...shared} shop={menu.shops.find((s) => s.id === shopId) ?? menu.shops[0]} onBack={() => go('home')} onBasket={() => go('basket')} />;
+  } else if (screen === 'basket') {
+    body = <Basket {...shared} config={config} onBack={() => go('home')} onPaid={(id) => { paid(id); go('home'); }} onError={setError} />;
+  } else {
+    body = <Home {...shared} onShop={(id) => { setShopId(id); go('shop'); }} onCall={() => go('call')} onBasket={() => go('basket')} />;
+  }
 
   return (
-    <div className="phone-app">
-      <header className="app-bar">
-        <span className="brand">LiftDrop</span>
-        <span className="deliver-to">To Level 23 pantry</span>
+    <div className={`cp-app${screen === 'call' ? ' cp-oncall' : ''}`}>
+      {error && <p className="cp-error" role="alert">{error}</p>}
+      {body}
+    </div>
+  );
+}
+
+// ---------- pieces ----------
+
+type Shared = { menu: Menu; cart: Cart; bump: (id: string, d: number) => void; blocked: (i: Item) => boolean };
+
+function Icon({ d, size = 18, stroke = 'currentColor', width = 2 }: { d: string; size?: number; stroke?: string; width?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d.split('|').map((p) => <path key={p} d={p} />)}</svg>;
+}
+const PHONE = 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z';
+const BACK = 'm15 18-6-6 6-6';
+
+function Stepper({ item, qty, bump, blocked }: { item: Item; qty: number; bump: Shared['bump']; blocked: boolean }) {
+  if (!qty) return <button className="cp-plus" aria-label={`Add ${item.name}`} disabled={blocked} title={blocked ? 'The robot carries from two shops per trip' : undefined} onClick={() => bump(item.id, 1)}>+</button>;
+  return (
+    <span className="cp-stepper">
+      <button aria-label={`One less ${item.name}`} onClick={() => bump(item.id, -1)}>−</button>
+      <span aria-live="polite">{qty}</span>
+      <button className="on" aria-label={`Add ${item.name}`} onClick={() => bump(item.id, 1)}>+</button>
+    </span>
+  );
+}
+
+function TwoShopNote({ menu, cart }: { menu: Menu; cart: Cart }) {
+  const s = cartShops(menu, cart);
+  if (s.length < MAX_SHOPS) return null;
+  return <p className="cp-note">The robot carries from two shops per trip: {s.map((id) => menu.shops.find((x) => x.id === id)?.name).join(' and ')}. Remove one to order from another shop.</p>;
+}
+
+function CartBar({ menu, cart, onBasket }: { menu: Menu; cart: Cart; onBasket: () => void }) {
+  const n = cartCount(cart);
+  if (!n) return null;
+  const k = cartShops(menu, cart).length;
+  return (
+    <button className="cp-cartbar" onClick={onBasket}>
+      <span className="cp-cartbar-text"><b>{n} {n === 1 ? 'item' : 'items'} · {k} {k === 1 ? 'shop' : 'shops'}</b><small>One robot brings it all to Level 23</small></span>
+      <span className="cp-cartbar-total">{$(cartTotal(menu, cart))}</span>
+    </button>
+  );
+}
+
+// ---------- home ----------
+
+function Home({ menu, cart, bump, blocked, onShop, onCall, onBasket }: Shared & { onShop: (id: string) => void; onCall: () => void; onBasket: () => void }) {
+  const shopName = (id: string) => menu.shops.find((s) => s.id === id)?.name ?? id;
+  return (
+    <div className="cp-screen">
+      <header className="cp-top">
+        <span className="cp-avatar" aria-hidden="true">23</span>
+        <div><div className="cp-k">Deliver to</div><div className="cp-where">Level 23 · Pantry</div></div>
       </header>
-      {error && <p className="app-error" role="alert">{error}</p>}
-      {!menu ? <p className="muted pad">Loading the menu…</p>
-        : orderId && detail ? <Tracking d={detail} shops={menu.shops} robot={robot} onNew={reset} onError={setError} />
-        : orderId ? <p className="muted pad">Finding your order…</p>
-        : <Shop menu={menu} cart={cart} setCart={setCart} config={config} onStarted={started} onError={setError} />}
+
+      <section className="cp-hero">
+        <h1>Lunch from the lobby</h1>
+        <p>Four shops downstairs. One robot, one PayPal checkout.</p>
+        <button className="cp-callbtn" onClick={onCall}><span><Icon d={PHONE} size={13} stroke="#fff" width={2.2} /></span>Call your order</button>
+        <img src={HERO} alt="" />
+      </section>
+
+      <h2 className="cp-h2">Shops</h2>
+      <div className="cp-shops">
+        {menu.shops.map((s) => {
+          const art = shopArt(s.id);
+          return (
+            <button key={s.id} className="cp-shop" onClick={() => onShop(s.id)}>
+              <span className="cp-shopimg"><img src={shopPhoto(s.id)} alt="" />{art.isNew && <span className={`cp-new ${art.isNew}`}>New</span>}</span>
+              <span>{s.name}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <h2 className="cp-h2 cp-h2-menu">On the menu</h2>
+      <TwoShopNote menu={menu} cart={cart} />
+      <div className="cp-grid">
+        {menu.items.map((i) => (
+          <div key={i.id} className={`cp-card${blocked(i) ? ' is-blocked' : ''}`}>
+            <img src={itemPhoto(i.id, 300)} alt="" />
+            <div className="cp-card-name">{i.name}</div>
+            <div className="cp-card-where">{shopName(i.shop_id)} · {shopArt(i.shop_id).counter}</div>
+            <div className="cp-card-foot"><span>{$(i.price_cents)}</span><Stepper item={i} qty={cart[i.id] ?? 0} bump={bump} blocked={blocked(i)} /></div>
+          </div>
+        ))}
+      </div>
+      <CartBar menu={menu} cart={cart} onBasket={onBasket} />
     </div>
   );
 }
 
-// ---------- ordering ----------
+// ---------- one shop ----------
 
-function Shop({ menu, cart, setCart, config, onStarted, onError }: {
-  menu: Menu; cart: Record<string, number>; setCart: (c: Record<string, number>) => void;
-  config: Config | null; onStarted: (id: string) => void; onError: (m: string) => void;
-}) {
-  const lines = Object.entries(cart).filter(([, q]) => q > 0).map(([item_id, qty]) => ({ item_id, qty }));
-  const total = lines.reduce((s, l) => s + (menu.items.find((i) => i.id === l.item_id)?.price_cents ?? 0) * l.qty, 0);
-  const add = (id: string, d: number) => setCart({ ...cart, [id]: Math.max(0, Math.min(5, (cart[id] ?? 0) + d)) });
-  // The robot has two compartments, one per shop.
-  const inCart = new Set(lines.map((l) => menu.items.find((i) => i.id === l.item_id)?.shop_id));
-  const full = inCart.size >= 2;
-
+function ShopMenu({ menu, cart, bump, blocked, shop, onBack, onBasket }: Shared & { shop: Shop; onBack: () => void; onBasket: () => void }) {
+  const art = shopArt(shop.id);
   return (
-    <div className="shop">
-      <Assistant onCart={(ls) => setCart(Object.fromEntries(ls.map((l) => [l.item_id, l.qty])))} onError={onError} />
-      {menu.shops.map((shop) => (
-        <section key={shop.id} className="menu-shop">
-          <h2>{shop.name}</h2>
-          {full && !inCart.has(shop.id) && <p className="muted small">The robot carries from two shops per trip. Remove one to order here.</p>}
-          {menu.items.filter((i) => i.shop_id === shop.id).map((i) => (
-            <div key={i.id} className="menu-item">
-              <div>
-                <div className="item-name">{i.name}</div>
-                <div className="muted small">{$(i.price_cents)}</div>
-              </div>
-              <div className="stepper">
-                {(cart[i.id] ?? 0) > 0 && <>
-                  <button aria-label={`One less ${i.name}`} onClick={() => add(i.id, -1)}>−</button>
-                  <span aria-live="polite">{cart[i.id]}</span>
-                </>}
-                <button aria-label={`Add ${i.name}`} disabled={full && !inCart.has(i.shop_id)} onClick={() => add(i.id, 1)}>+</button>
-              </div>
-            </div>
-          ))}
-        </section>
-      ))}
-      <div className="checkout">
-        {lines.length === 0 ? <p className="muted small">Add something, or ask above.</p> : <>
-          <div className="total-row"><span>Total</span><strong>{$(total)}</strong></div>
-          <p className="hold-note">PayPal holds {$(total)} now. You’re charged only for what you take out of the robot.</p>
-          <Pay lines={lines} config={config} onStarted={onStarted} onError={onError} />
-        </>}
+    <div className="cp-screen">
+      <div className="cp-navrow"><button className="cp-round" aria-label="Back" onClick={onBack}><Icon d={BACK} /></button></div>
+      <header className="cp-shophead">
+        <img src={shopPhoto(shop.id, 360)} alt="" />
+        <h1>{shop.name}</h1>
+        <p>{art.tagline} · {art.counter}</p>
+      </header>
+      <TwoShopNote menu={menu} cart={cart} />
+      <div className="cp-list">
+        {menu.items.filter((i) => i.shop_id === shop.id).map((i) => (
+          <div key={i.id} className="cp-row">
+            <img src={itemPhoto(i.id)} alt="" />
+            <div className="cp-row-main"><b>{i.name}</b><small>{itemUnit(i.id)}</small><span>{$(i.price_cents)}</span></div>
+            <Stepper item={i} qty={cart[i.id] ?? 0} bump={bump} blocked={blocked(i)} />
+          </div>
+        ))}
       </div>
+      <CartBar menu={menu} cart={cart} onBasket={onBasket} />
     </div>
   );
 }
 
-function Assistant({ onCart, onError }: { onCart: (l: { item_id: string; qty: number }[]) => void; onError: (m: string) => void }) {
-  const [text, setText] = useState('');
-  const [reply, setReply] = useState('');
-  const [busy, setBusy] = useState(false);
-  const ask = async (message: string) => {
-    if (!message.trim()) return;
-    setBusy(true); setReply('');
-    try {
-      const r = await api<{ lines: { item_id: string; qty: number }[]; reply: string }>('/api/assistant', { message });
-      setReply(r.reply);
-      if (r.lines.length) onCart(r.lines);
-    } catch (e) { onError((e as Error).message); }
-    setBusy(false);
-  };
+// ---------- basket ----------
+
+function Basket({ menu, cart, bump, blocked, config, onBack, onPaid, onError }: Shared & { config: Config | null; onBack: () => void; onPaid: (id: string) => void; onError: (m: string) => void }) {
+  const lines = cartLines(cart);
+  const shops = cartShops(menu, cart).map((id) => menu.shops.find((s) => s.id === id)!);
+  const total = cartTotal(menu, cart);
   return (
-    <form className="assistant" onSubmit={(e) => { e.preventDefault(); ask(text); }}>
-      <label htmlFor="ask">What would you like?</label>
-      <div className="ask-row">
-        <input id="ask" value={text} onChange={(e) => setText(e.target.value)} placeholder="A croissant and something cold" autoComplete="off" />
-        <button type="submit" disabled={busy || !text.trim()}>{busy ? 'Thinking…' : 'Ask'}</button>
+    <div className="cp-screen">
+      <div className="cp-navrow">
+        <button className="cp-round" aria-label="Back" onClick={onBack}><Icon d={BACK} /></button>
+        <h1 className="cp-title">Your basket</h1>
+        <span className="cp-round-spacer" />
       </div>
-      {reply && <p className="assistant-reply" role="status">{reply}</p>}
-    </form>
-  );
-}
-
-// ---------- paying ----------
-
-type PayPalNS = { Buttons: (o: Record<string, unknown>) => { render: (el: HTMLElement) => Promise<void>; close?: () => void } };
-const sdk: Record<string, Promise<PayPalNS>> = {};
-function loadPayPal(clientId: string) {
-  return (sdk[clientId] ??= new Promise((ok, fail) => {
-    const s = document.createElement('script');
-    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=USD&intent=authorize&components=buttons`;
-    s.onload = () => ok((window as unknown as { paypal: PayPalNS }).paypal);
-    s.onerror = () => fail(new Error('PayPal could not load. Check your connection and reload.'));
-    document.head.appendChild(s);
-  }));
-}
-
-function Pay({ lines, config, onStarted, onError }: {
-  lines: { item_id: string; qty: number }[]; config: Config | null; onStarted: (id: string) => void; onError: (m: string) => void;
-}) {
-  const box = useRef<HTMLDivElement>(null);
-  const linesRef = useRef(lines);
-  linesRef.current = lines;
-  const cb = useRef({ onStarted, onError }); // parent callbacks change identity; the PayPal button must not re-render
-  cb.current = { onStarted, onError };
-  const [busy, setBusy] = useState(false);
-
-  const create = useCallback(() => api<Order>('/api/orders', { location: 'L23-pantry', cart: linesRef.current }), []);
-
-  // Sandbox: the real PayPal button. The popup approves; our server then authorizes (holds).
-  useEffect(() => {
-    if (config?.mode !== 'sandbox' || !config.clientId || !box.current) return;
-    let ours: string | null = null;
-    let closed = false;
-    const el = box.current;
-    loadPayPal(config.clientId).then((paypal) => {
-      if (closed) return;
-      const b = paypal.Buttons({
-        style: { layout: 'vertical', shape: 'rect', label: 'pay', height: 44 },
-        createOrder: async () => { const o = await create(); ours = o.id; return o.paypal_order_id; },
-        onApprove: async () => {
-          try { await api('/api/authorize', { order_id: ours }); cb.current.onStarted(ours!); }
-          catch (e) { cb.current.onError((e as Error).message); }
-        },
-        onCancel: () => cb.current.onError('Payment cancelled. Nothing was held.'),
-        onError: (e: unknown) => cb.current.onError(`PayPal: ${e instanceof Error ? e.message : String(e)}`),
-      });
-      el.innerHTML = '';
-      return b.render(el);
-    }).catch((e) => cb.current.onError(e.message));
-    return () => { closed = true; el.innerHTML = ''; };
-  }, [config, create]);
-
-  if (!config) return null;
-  if (config.mode === 'sandbox') return <div ref={box} className="paypal-box" />;
-  return (
-    <button className="pay-test" disabled={busy} onClick={async () => {
-      setBusy(true);
-      try {
-        const o = await create();
-        await api('/api/authorize', { order_id: o.id });
-        onStarted(o.id);
-      } catch (e) { onError((e as Error).message); setBusy(false); }
-    }}>{busy ? 'Holding payment…' : 'Pay with PayPal (test mode)'}</button>
+      {!lines.length ? <p className="cp-empty">Your basket is empty. Add something from the shops, or call your order in.</p> : <>
+        <div className="cp-route" aria-label="Robot route">
+          <div className="cp-route-head"><span>One robot, {shops.length === 1 ? 'one stop' : 'two stops'}</span><span>Level 23</span></div>
+          <ol>
+            {shops.map((s) => <li key={s.id}>{s.name}</li>)}
+            <li>Lift</li>
+            <li className="end">Pantry</li>
+          </ol>
+        </div>
+        {shops.map((s, n) => (
+          <section key={s.id} className="cp-group">
+            <div className="cp-group-head"><span>{s.name} · {shopArt(s.id).counter}</span><span>Compartment {n === 0 ? 'A' : 'B'}</span></div>
+            {lines.filter((l) => menu.items.find((i) => i.id === l.item_id)?.shop_id === s.id).map((l) => {
+              const i = menu.items.find((x) => x.id === l.item_id)!;
+              return (
+                <div key={i.id} className="cp-row">
+                  <img src={itemPhoto(i.id)} alt="" />
+                  <div className="cp-row-main"><b>{i.name}</b><small>{itemUnit(i.id)}</small><span>{$(i.price_cents * l.qty)}</span></div>
+                  <Stepper item={i} qty={l.qty} bump={bump} blocked={blocked(i)} />
+                </div>
+              );
+            })}
+          </section>
+        ))}
+        <div className="cp-sum">
+          <div><span>Subtotal</span><span>{$(total)}</span></div>
+          <div><span>Tower delivery</span><span>Free</span></div>
+          <div className="total-row"><span>Total</span><span>{$(total)}</span></div>
+        </div>
+        <p className="cp-hold">PayPal holds {$(total)} now. You’re charged only for what you take out of the robot; anything you leave goes back to the shop.</p>
+        <div className="cp-paybar"><Pay lines={lines} config={config} label={`Pay with PayPal · ${$(total)}`} onStarted={onPaid} onError={onError} /></div>
+      </>}
+    </div>
   );
 }
 
@@ -248,30 +289,24 @@ function Tracking({ d, shops, robot, onNew, onError }: { d: Detail; shops: Shop[
   // The agent asked the customer to check a compartment, after their latest tap.
   const asked = order.status === 'at_door' && decision?.action === 'wait' && !!doneAt && Date.parse(decision.at) >= Date.parse(doneAt) && !pending;
   const checking = order.status === 'at_door' && !asked && (pending || !!doneAt);
-  const shopName = (id: string) => shops.find((s) => s.id === id)?.name ?? id;
-  const waitingAt = compartments.find((c) => !c.loaded);
-
-  const headline =
-    order.status === 'created' ? 'Waiting for PayPal'
-    : order.status === 'held' ? 'Robot is heading to the shops'
-    : order.status === 'collecting' ? `Picking up at ${waitingAt ? shopName(waitingAt.shop_id) : 'the shops'}`
-    : order.status === 'en_route' ? 'On its way up to you'
-    : order.status === 'at_door' ? (asked ? 'One more check' : checking ? 'Checking what you took…' : 'Your robot is at the pantry')
-    : DONE.includes(order.status) ? 'Delivered'
-    : order.status === 'voided' || order.status === 'returning' ? 'Not delivered, not charged'
-    : order.captured_cents > 0 ? 'Charged, payout delayed' : 'Something went wrong. You haven’t been charged.';
+  const shopOf = (c: string) => shops.find((s) => s.id === compartments.find((x) => x.id === c)?.shop_id)?.name ?? '';
+  const tapDone = async () => {
+    setTapped(doneAt ?? '');
+    try { await api(`/api/orders/${order.id}`, { action: 'done' }); } catch (e) { setTapped(null); onError((e as Error).message); }
+  };
+  const bag = (c: string) => lines.filter((l) => l.compartment_id === c);
 
   return (
-    <div className="tracking">
-      <div className="track-head">
+    <div className="cp-screen cp-track">
+      <header className="cp-trackhead">
         <Floor d={d} robot={robot} />
         <div>
-          <h1 className="headline">{headline}</h1>
-          <p className="muted small">Order {order.id}</p>
+          <h1 className="headline">{headlineOf(d, shops, asked, checking)}</h1>
+          <p>Order {order.id}</p>
         </div>
-      </div>
+      </header>
 
-      <ol className="steps" aria-label="Delivery progress">
+      <ol className="cp-steps" aria-label="Delivery progress">
         {STEPS.map((s, i) => <li key={s} className={i < step ? 'done' : i === step ? 'now' : ''}>{s}</li>)}
       </ol>
 
@@ -280,45 +315,50 @@ function Tracking({ d, shops, robot, onNew, onError }: { d: Detail; shops: Shop[
           <p>Compartment{compartments.length > 1 ? 's' : ''} {compartments.map((c) => c.id).join(' and ')} {compartments.length > 1 ? 'are' : 'is'} open.</p>
           <ul className="bag-list">
             {compartments.map((c) => (
-              <li key={c.id}><span className="comp-tag">{c.id}</span>{lines.filter((l) => l.compartment_id === c.id).map((l) => `${l.qty > 1 ? `${l.qty}× ` : ''}${l.name}`).join(', ')}</li>
+              <li key={c.id}>
+                <span className="comp-tag">{c.id}</span>
+                <span className="cp-bagthumbs">{bag(c.id).map((l) => <img key={l.item_id} src={itemPhoto(l.item_id, 100)} alt="" />)}</span>
+                <span>{bag(c.id).map((l) => `${l.qty > 1 ? `${l.qty}× ` : ''}${l.name}`).join(', ')}<small>{shopOf(c.id)}</small></span>
+              </li>
             ))}
           </ul>
-          <p className="muted small">Take what you want. Anything you leave goes back to the shop and isn’t charged.</p>
-          <button className="primary" onClick={async () => {
-            setTapped(doneAt ?? '');
-            try { await api(`/api/orders/${order.id}`, { action: 'done' }); } catch (e) { setTapped(null); onError((e as Error).message); }
-          }}>I’ve taken my order</button>
+          <p className="cp-soft">Take what you want. Anything you leave goes back to the shop and isn’t charged.</p>
+          <button className="cp-primary" onClick={tapDone}>I’ve taken my order</button>
         </div>
       )}
 
       {asked && (
         <div className="door-card">
           <p>{order.customer_message}</p>
-          <button className="primary" onClick={async () => {
-            setTapped(doneAt ?? '');
-            try { await api(`/api/orders/${order.id}`, { action: 'done' }); } catch (e) { setTapped(null); onError((e as Error).message); }
-          }}>Done</button>
+          <button className="cp-primary" onClick={tapDone}>Done</button>
         </div>
       )}
 
       {step === 4 && (
         <div className="receipt">
           {order.customer_message && <p className="receipt-msg">{order.customer_message}</p>}
-          <div className="receipt-row"><span>Held</span><span>{$(sum('held'))}</span></div>
-          <div className="receipt-row"><span>Charged</span><strong>{$(sum('captured'))}</strong></div>
-          <div className="receipt-row"><span>Released back to you</span><span>{$(sum('voided'))}</span></div>
           <ul className="bag-list">
             {compartments.map((c) => {
               const charged = DONE.includes(order.status) && !!decision?.charge_compartments.includes(c.id);
-              const names = lines.filter((l) => l.compartment_id === c.id).map((l) => l.name).join(', ');
-              return <li key={c.id}><span className="comp-tag">{c.id}</span>{names} <em className={charged ? 'ok' : 'muted'}>{charged ? 'taken' : 'returned to shop'}</em></li>;
+              return (
+                <li key={c.id}>
+                  <span className="cp-bagthumbs">{bag(c.id).map((l) => <img key={l.item_id} src={itemPhoto(l.item_id, 100)} alt="" />)}</span>
+                  <span>{bag(c.id).map((l) => l.name).join(', ')}</span>
+                  <em className={charged ? 'ok' : ''}>{charged ? 'taken' : 'returned to shop'}</em>
+                </li>
+              );
             })}
           </ul>
-          <button className="secondary" onClick={onNew}>Order again</button>
+          <div className="receipt-rows">
+            <div className="receipt-row"><span>Held</span><span>{$(sum('held'))}</span></div>
+            <div className="receipt-row"><span>Released back to you</span><span>{$(sum('voided'))}</span></div>
+            <div className="receipt-row total"><span>Charged</span><strong>{$(sum('captured'))}</strong></div>
+          </div>
+          <button className="cp-secondary" onClick={onNew}>Order again</button>
         </div>
       )}
       {step < 4 && order.status !== 'at_door' && (
-        <p className="hold-note">{$(order.total_cents)} held by PayPal. Nothing is charged until you take your order.</p>
+        <p className="cp-hold">{$(order.total_cents)} held by PayPal. Nothing is charged until you take your order.</p>
       )}
     </div>
   );

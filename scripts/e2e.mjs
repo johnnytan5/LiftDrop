@@ -5,13 +5,18 @@
 //   node scripts/e2e.mjs [screenshot-dir]          # E2E_URL to point elsewhere
 //
 // Scenarios, one after another on the same page, like a person ordering three times:
-//   1. assistant fills the cart -> pay -> robot delivers -> customer takes bag A only
+//   1. customer CALLS the order line (Chrome's fake mic plays a spoken request; real AssemblyAI
+//      speech-to-text + Muse Spark + AssemblyAI voice) -> approve in PayPal -> robot delivers
+//      -> customer takes bag A only
 //      -> charged $4.50, $9.00 released, latte returned to the café, bakery paid $4.05
 //   2. customer takes both -> charged in full
 //   3. customer takes nothing and taps done -> nothing charged
 //   4. shops load by hand on /vendor   5. agent asks once on an unclear weight
 //   6. the two far shops (noodles + greens); a third shop's + is disabled
+import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 
 const URL = process.env.E2E_URL ?? 'http://localhost:3001/';
@@ -19,8 +24,15 @@ const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Conte
 const shots = process.argv[2];
 if (shots) mkdirSync(shots, { recursive: true });
 
-const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
-const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+// The caller's voice for scenario 1 (macOS say). It waits out the greeting (the echo gate mutes
+// the mic while the line speaks) and ends in long silence because the fake mic loops it.
+const wav = join(tmpdir(), 'liftdrop-caller.wav');
+execFileSync('say', ['-o', wav, '--data-format=LEI16@16000', '[[slnc 9000]] Hi. Can I get a butter croissant and an iced latte please? [[slnc 120000]]']);
+const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: [
+  '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+  '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${wav}`, '--autoplay-policy=no-user-gesture-required',
+] });
+const page = await (await browser.newContext({ viewport: { width: 1600, height: 900 }, permissions: ['microphone'] })).newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
@@ -48,21 +60,50 @@ await waitText(stage, /Docked, waiting for an order/, 90_000, 'MuJoCo loaded, ro
 await stage.getByRole('button', { name: '4×' }).click();
 await shot('ready');
 
-async function order({ ask, cart }) {
-  if (ask) {
-    await phone.getByLabel('What would you like?').fill(ask);
-    await phone.getByRole('button', { name: 'Ask' }).click();
-    await phone.locator('.assistant-reply').waitFor({ timeout: 20_000 });
-    log(`assistant: "${await text('.assistant-reply')}"`);
-  }
-  for (const name of cart ?? []) await phone.getByRole('button', { name: `Add ${name}` }).click();
-  await check(/\$13\.50/.test(await text('.total-row')), `cart total is $13.50 (${(await text('.total-row')).replace('\n', ' ')})`);
-  await shot('cart');
-  await phone.getByRole('button', { name: /Pay with PayPal/ }).click();
+async function delivered() {
   await waitText(phone, /Robot is heading to the shops|Picking up at/, 15_000, 'paid: payment held, robot dispatched');
   await shot('held');
   await waitText(phone, /On its way up to you/, 120_000, 'both bags loaded, robot heading for the lift');
   await shot('lift');
+  await waitText(phone, /Your robot is at the pantry/, 120_000, 'robot at the L23 pantry, doors open');
+  await shot('at-door');
+}
+
+async function order(cart) {
+  for (const name of cart) await phone.getByRole('button', { name: `Add ${name}` }).click();
+  await phone.locator('.cp-cartbar').click();
+  await check(/\$13\.50/.test(await text('.total-row')), `basket total is $13.50 (${(await text('.total-row')).replace('\n', ' ')})`);
+  await shot('basket');
+  await phone.getByRole('button', { name: /Pay with PayPal/ }).click();
+  await delivered();
+}
+
+async function callOrder() {
+  await phone.getByRole('button', { name: 'Call your order' }).click();
+  try { await phone.locator('.cp-bubbles li.caller:not(.partial)').first().waitFor({ timeout: 45_000 }); } catch { await fail('the order line never heard the caller'); }
+  log(`caller said: "${await phone.locator('.cp-bubbles li.caller').first().innerText()}"`);
+  try { await phone.locator('.cp-callcard').waitFor({ timeout: 30_000 }); } catch { await fail('Muse Spark did not fill the basket'); }
+  log(`line: "${await phone.locator('.cp-bubbles li.agent').last().innerText()}"`);
+  await check(/Butter croissant.*Iced latte|Iced latte.*Butter croissant/.test(await text('.cp-callcard-items')) && /\$13\.50/.test(await text('.cp-callcard')), `basket filled by voice: ${await text('.cp-callcard-items')}`);
+  await shot('call-basket');
+  // Finish by typing (the fake mic only says one line). Spark may ask once more before checking out.
+  const approve = phone.getByRole('button', { name: 'Approve in PayPal' });
+  for (const say of ['That is everything, I would like to pay now.', 'Yes, please check out.', 'Check out please.']) {
+    if (!(await phone.locator('.cp-type').count())) await phone.getByRole('button', { name: 'Type instead' }).click();
+    await phone.getByLabel('Type to the order line').fill(say);
+    await phone.getByRole('button', { name: 'Send' }).click();
+    log(`caller types: "${say}"`);
+    try { await approve.waitFor({ timeout: 25_000 }); break; } catch { log(`line: "${await phone.locator('.cp-bubbles li.agent').last().innerText()}"`); }
+  }
+  if (!(await approve.count())) await fail('Muse Spark never checked out');
+  log(`line: "${await phone.locator('.cp-bubbles li.agent').last().innerText()}"`);
+  await shot('call-approve');
+  await approve.click();
+  await waitText(phone, /Approved/, 15_000, 'PayPal approved on the call');
+  await shot('call-approved');
+  // The line says goodbye first; at 4× the robot may already be past the shops by then.
+  try { await phone.locator('.cp-trackhead').waitFor({ timeout: 40_000 }); } catch { await fail('call never hung up after PayPal approval'); }
+  log(`call ended, phone tracking: "${await text('.cp-trackhead .headline')}"`);
   await waitText(phone, /Your robot is at the pantry/, 120_000, 'robot at the L23 pantry, doors open');
   await shot('at-door');
 }
@@ -84,8 +125,8 @@ const tapDone = async () => {
 const docked = () => waitText(stage, /robot docked/, 150_000, 'robot back at the dock');
 
 // 1. Assistant, take only the croissant.
-log('--- scenario 1: assistant order, croissant taken, latte left');
-await order({ ask: 'one butter croissant and an iced latte please' });
+log('--- scenario 1: order by phone call, croissant taken, latte left');
+await callOrder();
 await takeBag('A');
 await tapDone();
 await receipt({ headline: /Delivered/, charged: '$4.50', released: '$9.00' });
@@ -99,7 +140,7 @@ await shot('docked');
 // 2. Manual cart, take both.
 log('--- scenario 2: both bags taken');
 await phone.getByRole('button', { name: 'Order again' }).click();
-await order({ cart: ['Butter croissant', 'Iced latte'] });
+await order(['Butter croissant', 'Iced latte']);
 await takeBag('A');
 await takeBag('B');
 await tapDone();
@@ -109,7 +150,7 @@ await docked();
 // 3. Nothing taken.
 log('--- scenario 3: nothing taken');
 await phone.getByRole('button', { name: 'Order again' }).click();
-await order({ cart: ['Butter croissant', 'Iced latte'] });
+await order(['Butter croissant', 'Iced latte']);
 await tapDone();
 await receipt({ headline: /Not delivered, not charged/, charged: '$0.00', released: '$13.50' });
 await docked();
@@ -121,6 +162,7 @@ const tablet = await browser.newPage({ viewport: { width: 800, height: 900 } });
 tablet.on('pageerror', (e) => errors.push(`vendor: ${e.message}`));
 await phone.getByRole('button', { name: 'Order again' }).click();
 for (const name of ['Butter croissant', 'Iced latte']) await phone.getByRole('button', { name: `Add ${name}` }).click();
+await phone.locator('.cp-cartbar').click();
 await phone.getByRole('button', { name: /Pay with PayPal/ }).click();
 for (const [shop, comp, label] of [['cafe', 'B', 'Level G Café'], ['bakery', 'A', 'Crumb Bakery']]) {
   await waitText(stage, new RegExp(`loading at ${label}`), 90_000, `robot waiting at ${label}`);
@@ -146,7 +188,7 @@ await stage.getByLabel('Shops load instantly').check();
 //    charged because the sensors never confirmed it was taken.
 log('--- scenario 5: weight doesn’t match, agent decides');
 await phone.getByRole('button', { name: 'Order again' }).click();
-await order({ cart: ['Butter croissant', 'Iced latte'] });
+await order(['Butter croissant', 'Iced latte']);
 await stage.getByRole('button', { name: 'Half-take A' }).click();
 log('customer disturbs bag A (half its weight)');
 await tapDone();
@@ -171,7 +213,8 @@ log('--- scenario 6: Noodle House + Green Bowl, third shop blocked');
 await phone.getByRole('button', { name: 'Order again' }).click();
 for (const name of ['Chicken noodle soup', 'Fresh fruit cup']) await phone.getByRole('button', { name: `Add ${name}` }).click();
 await check(await phone.getByRole('button', { name: 'Add Butter croissant' }).isDisabled(), 'third shop disabled: robot carries from two shops');
-await check(/\$18\.00/.test(await text('.total-row')), `cart total is $18.00 (${(await text('.total-row')).replace('\n', ' ')})`);
+await phone.locator('.cp-cartbar').click();
+await check(/\$18\.00/.test(await text('.total-row')), `basket total is $18.00 (${(await text('.total-row')).replace('\n', ' ')})`);
 await phone.getByRole('button', { name: /Pay with PayPal/ }).click();
 await waitText(stage, /loading at Noodle House/, 90_000, 'robot at Noodle House');
 await waitText(stage, /loading at Green Bowl/, 90_000, 'robot at Green Bowl');
@@ -183,7 +226,7 @@ await tapDone();
 await receipt({ headline: /Delivered/, charged: '$18.00', released: '$0.00' });
 await docked();
 
-const real = errors.filter((e) => !/Download the React DevTools|favicon/.test(e));
+const real = errors.filter((e) => !/Download the React DevTools|favicon|images\.unsplash\.com/.test(e));
 await check(real.length === 0, `no page errors${real.length ? `: ${real.join('\n')}` : ''}`);
 log('PASS');
 await browser.close();

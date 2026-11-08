@@ -19,23 +19,29 @@ const apiKey = () => (isOpenRouter() ? process.env.OPENROUTER_API_KEY : process.
 
 export const llmConfigured = () => !!apiKey();
 
+// The phone call always runs on Muse Spark, whatever LLM_BASE_URL says for the handoff agent.
+const SPARK = { base: 'https://api.meta.ai/v1', key: () => process.env.META_API_KEY || process.env.LLM_API_KEY, model: () => process.env.SPARK_MODEL ?? 'muse-spark-1.1' };
+export const sparkConfigured = () => !!SPARK.key();
+
 export async function chat(opts: {
   messages: ChatMessage[];
   tools?: ToolDef[];
   maxTokens?: number;
   timeoutMs?: number;
+  spark?: boolean;
 }): Promise<AssistantMessage> {
-  const res = await fetch(`${base()}/chat/completions`, {
+  const openRouter = !opts.spark && isOpenRouter();
+  const res = await fetch(`${opts.spark ? SPARK.base : base()}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey()}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.spark ? SPARK.key() : apiKey()}` },
     body: JSON.stringify({
-      model: process.env.LLM_MODEL ?? 'muse-spark-1.1',
+      model: opts.spark ? SPARK.model() : process.env.LLM_MODEL ?? 'muse-spark-1.1',
       messages: opts.messages,
       ...(opts.tools?.length ? { tools: opts.tools } : {}),
       ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
       // Low reasoning keeps the handoff fast: gpt-6-luna ~2 s at minimal vs ~5 s default;
       // Muse still reasons 500-900 tokens (~4-6 s) even at minimal.
-      ...(isOpenRouter() ? { reasoning: { effort: 'minimal' } } : { reasoning_effort: 'minimal' }),
+      ...(openRouter ? { reasoning: { effort: 'minimal' } } : { reasoning_effort: 'minimal' }),
     }),
     signal: AbortSignal.timeout(opts.timeoutMs ?? 8000),
   });

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "check": "node --test lib/*.test.ts lib/sim/*.test.ts",
+    "check": "node --test lib/*.test.ts lib/call/*.test.ts lib/sim/*.test.ts",
     "predev": "node scripts/sync-sim-assets.mjs",
     "prebuild": "node scripts/sync-sim-assets.mjs",
     "e2e": "node scripts/e2e.mjs"
