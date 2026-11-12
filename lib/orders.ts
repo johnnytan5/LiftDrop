@@ -338,6 +338,13 @@ export async function syncPayout(orderId: string) {
   if (order.status !== 'paying_out' || !order.payout_batch_id) return order;
   const p = await paypal.getPayout(order.payout_batch_id);
   if (!p.done) return order;
+  // Two syncs can see the same finished batch at once (the poller and an /api/state sweep, or two
+  // server instances). The status move is a compare-and-set, so it goes first: only the sync that
+  // wins it writes the paid_out rows; the other gets "changed concurrently" and writes nothing.
+  // ponytail: a crash between the two leaves the order paid_out without its rows; a ledger
+  // transaction (RPC) would close that if it ever matters.
+  let moved: Order;
+  try { moved = await move(order, p.ok ? 'paid_out' : 'failed'); } catch { return db.getOrder(orderId); }
   const pending = (await db.listLedger(orderId)).filter((r) => r.kind === 'payout_pending');
   const paidOut = (rows: typeof pending) => db.insertLedger(rows.map((r) => ({ order_id: orderId, shop_id: r.shop_id, kind: 'paid_out' as const, amount_cents: r.amount_cents, paypal_ref: r.paypal_ref })));
   if (!p.ok) {
@@ -346,10 +353,10 @@ export async function syncPayout(orderId: string) {
     await paidOut(pending.filter((r) => r.shop_id && landed.has(r.shop_id)));
     const bad = p.items.filter((i) => i.status !== 'SUCCESS').map((i) => `${i.shop_id} ${i.status}`);
     await db.insertEvent(orderId, 'error', { message: bad.length ? `payout to ${bad.join(', ')} (batch ${p.status})` : `payout batch ${p.status}`, items: p.items });
-    return move(order, 'failed');
+    return moved;
   }
   await paidOut(pending);
-  return move(order, 'paid_out');
+  return moved;
 }
 
 // In-process poller: moves a payout along fast on a long-running server. On serverless its timers

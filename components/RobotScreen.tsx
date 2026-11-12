@@ -10,7 +10,7 @@ import Countdown from './Countdown.tsx';
 export type ScreenMode =
   | { kind: 'status'; title: string; text: string }
   | { kind: 'load'; shop: string; comp: string; items: string[]; done: boolean }
-  | { kind: 'return'; shop: string; comp: string; items: string[] }
+  | { kind: 'return'; shop: string; comp: string; items: string[]; charged: boolean }
   | { kind: 'code'; floor: number; until: number }
   | { kind: 'open'; comps: string[] };
 
@@ -43,7 +43,7 @@ export default function RobotScreen({ name, mode, onLoaded, onReturned, onCode, 
             <span className="rs-k">{mode.shop} · returning</span>
             <b>Not collected. Please take it back from compartment {mode.comp}</b>
             <ul>{mode.items.map((i) => <li key={i}>{i}</li>)}</ul>
-            <span className="rs-wait">The customer wasn’t charged for this.</span>
+            <span className="rs-wait">{mode.charged ? 'Final sale: the customer was charged for this, and you’re paid for it.' : 'The customer wasn’t charged for this.'}</span>
             <button className="rs-big" onClick={() => onReturned(mode.comp)}>Taken back · close {mode.comp}</button>
           </div>
         )}

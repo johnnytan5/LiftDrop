@@ -207,7 +207,10 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
       items: itemsIn(loadingAt.comp),
       done: !!comps.find((c) => c.id === loadingAt.comp)?.vendor_loaded_at,
     }
-    : returningAt ? { kind: 'return', shop: returningAt.label, comp: returningAt.comp, items: itemsIn(returningAt.comp) }
+    : returningAt ? {
+      kind: 'return', shop: returningAt.label, comp: returningAt.comp, items: itemsIn(returningAt.comp),
+      charged: (state?.order_items ?? []).some((l) => l.order_id === active && l.compartment_id === returningAt.comp && l.final_sale),
+    }
     : active && phase === 'calling customer' ? { kind: 'code', floor, until: codeUntil }
     : active && atDoor && phase === 'at the gate' ? { kind: 'open', comps: comps.map((c) => c.id) }
     : phase === 'idle' ? { kind: 'status', title: 'Ready', text: 'Docked and charging. Waiting for an order.' }
@@ -218,7 +221,7 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
   const tip: NudgeTip | null = screen.kind === 'load' && !screen.done
     ? { key: `load:${active}:${screen.comp}`, el: '.rs-glass .rs-big', say: `You're the ${screen.shop} staff now: put the bag in compartment ${screen.comp}, then tap “Loaded” on the robot's screen.` }
     : screen.kind === 'return'
-    ? { key: `return:${active}:${screen.comp}`, el: '.rs-glass .rs-big', say: `The robot brought back what wasn't collected. As the ${screen.shop} staff, take it out of compartment ${screen.comp}, then tap “Taken back”.` }
+    ? { key: `return:${active}:${screen.comp}`, el: '.rs-glass .rs-big', say: `The robot brought back what wasn't collected${screen.charged ? ' (final sale, so it was still paid for)' : ''}. As the ${screen.shop} staff, take it out of compartment ${screen.comp}, then tap “Taken back”.` }
     : screen.kind === 'code'
     ? { key: `code:${active}`, el: '.rs-code', say: 'The robot is at your security gate. Type the 4-digit code shown on the phone into its screen.' }
     : screen.kind === 'open' && !bagOut

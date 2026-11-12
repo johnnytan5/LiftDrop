@@ -3,7 +3,7 @@
 // A nudge for a demo that's waiting on a person: after a few seconds with nothing happening, a
 // pulsing frame, a pointer and a short tip land on what to tap (Loaded at a shop, the gate code,
 // the bags at the door, Taken back on the way home). Same look as the guided tour, but on its own:
-// it shows whether or not the tour is on, and steps aside while the tour's bubble is up.
+// it shows whether or not the tour is on, and steps aside only when the tour points at the same thing.
 
 import { useEffect, useState } from 'react';
 
@@ -33,8 +33,11 @@ export default function Nudge({ tip }: { tip: NudgeTip | null }) {
     let raf = 0;
     const tick = () => {
       const el = [...document.querySelectorAll(tip!.el)].find((e) => e.getClientRects().length > 0);
-      const r = el && !document.querySelector('.tour-bubble:not(.nudge)') ? el.getBoundingClientRect() : null;
-      setBox((b) => !r || r.width === 0 ? null
+      const r = el?.getBoundingClientRect();
+      // The guided tour already points here: let it speak. Pointing elsewhere (it's behind or ahead), show anyway.
+      const tour = document.querySelector('.tour-ring:not(.nudge)')?.getBoundingClientRect();
+      const same = !!r && !!tour && tour.right > r.left && tour.left < r.right && tour.bottom > r.top && tour.top < r.bottom;
+      setBox((b) => !r || r.width === 0 || same ? null
         : b && Math.abs(b.x - r.x) < 1 && Math.abs(b.y - r.y) < 1 && Math.abs(b.w - r.width) < 1 && Math.abs(b.h - r.height) < 1 ? b
         : { x: r.x, y: r.y, w: r.width, h: r.height });
       raf = requestAnimationFrame(tick);
@@ -52,7 +55,7 @@ export default function Nudge({ tip }: { tip: NudgeTip | null }) {
 
   return (
     <>
-      <span className="tour-ring" style={{ left: box.x - 6, top: box.y - 6, width: box.w + 12, height: box.h + 12 }} aria-hidden="true" />
+      <span className="tour-ring nudge" style={{ left: box.x - 6, top: box.y - 6, width: box.w + 12, height: box.h + 12 }} aria-hidden="true" />
       <svg className="tour-cursor" style={{ transform: `translate(${box.x + Math.min(box.w * 0.6, box.w - 8)}px, ${box.y + box.h * 0.6}px)` }} width="26" height="30" viewBox="0 0 26 30" aria-hidden="true">
         <path d="M2 2 L2 24 L8 18.5 L12.5 28 L16.5 26 L12 16.8 L20 16.5 Z" fill="var(--cp-coral)" stroke="#fff" strokeWidth="2" strokeLinejoin="round" />
       </svg>

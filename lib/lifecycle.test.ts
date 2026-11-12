@@ -162,8 +162,12 @@ test('payout stays pending until PayPal confirms the batch', async () => {
   const kinds = () => db.listLedger(o.id).then((l) => l.map((r) => r.kind));
   assert.ok((await kinds()).includes('payout_pending'));
   assert.ok(!(await kinds()).includes('paid_out'));
-  assert.equal((await syncPayout(o.id)).status, 'paid_out');
-  assert.equal((await db.listLedger(o.id)).find((r) => r.kind === 'paid_out')?.amount_cents, 427);
+  // The poller and an /api/state sweep can check the same batch at once: one paid_out row, not two.
+  const both = await Promise.all([syncPayout(o.id), syncPayout(o.id)]);
+  assert.deepEqual(both.map((x) => x.status), ['paid_out', 'paid_out']);
+  const paid = (await db.listLedger(o.id)).filter((r) => r.kind === 'paid_out');
+  assert.equal(paid.length, 1);
+  assert.equal(paid[0].amount_cents, 427);
 });
 
 test('signals across devices: one sim tab claims, shop loads, customer taps done', async () => {
