@@ -26,16 +26,50 @@ A lot of office workers eat at their desks, and the shops in the lobby lose that
 
 When the scale and camera disagree, an LLM agent reads both and decides (Muse Spark, or any OpenAI-compatible model). With no key set it falls back to a fixed rule set, and anything it can't decide goes to the ops console.
 
-## PayPal
+## How LiftDrop uses PayPal and AI
 
-| Step | API |
-|---|---|
-| Hold the basket | Orders v2: create (`intent: AUTHORIZE`) + authorize |
-| Charge what was taken | Payments v2: capture an authorization (partial) |
-| Release the rest | Payments v2: void an authorization |
-| Pay each shop | Payouts v1: one batch per order, one item per shop |
+LiftDrop runs on the **PayPal sandbox** and uses AI in four places: taking orders by phone, hearing and speaking on that call, checking each compartment with a camera, and settling orders the sensors can't agree on.
 
-All money moves are idempotent (`PayPal-Request-Id`) and recorded in a ledger table, so a retry never charges twice. Code: `lib/paypal.ts`, `lib/orders.ts`, `lib/handoff.ts`.
+### PayPal tools (sandbox)
+
+| PayPal tool | Call | What it does in LiftDrop |
+|---|---|---|
+| **PayPal JavaScript SDK** (Smart Payment Buttons, `intent=authorize`) | `components/Pay.tsx` | The customer approves the order in PayPal on the phone screen, from the app basket or straight from the phone call. |
+| **OAuth 2.0** | `POST /v1/oauth2/token` | Server-side access token for every API call below. |
+| **Orders v2** | `POST /v2/checkout/orders` (`intent: AUTHORIZE`), `POST /v2/checkout/orders/{id}/authorize` | Holds the full basket on the customer's account. Nothing is charged while the robot delivers. |
+| **Payments v2: capture** | `POST /v2/payments/authorizations/{id}/capture` | When the doors close, charges exactly what the scale and camera agree was taken. A partial capture sets `final_capture: true`, which releases the rest of the hold in the same call. |
+| **Payments v2: void** | `POST /v2/payments/authorizations/{id}/void` | Nothing taken, or the order is cancelled: the whole hold is released and nothing is charged. |
+| **Payouts v1** | `POST /v1/payments/payouts`, `GET /v1/payments/payouts/{batch_id}` | Pays the shops: one batch per order, one item per shop, each shop's share minus the 5% LiftDrop fee. The app polls the batch until PayPal confirms each shop was paid. |
+
+Every money call sends a `PayPal-Request-Id`, so a retry returns the first result and never charges or pays twice, and every money move is written to a ledger table. Code: `lib/paypal.ts` (client, plus a local mock with the same behaviour), `lib/orders.ts` (when each call happens), `lib/handoff.ts` (what to charge).
+
+| Customer takes | PayPal call | Result |
+|---|---|---|
+| Everything | capture, full amount | Charged the total |
+| Part of it | capture part, `final_capture: true` | Charged for what was taken, the rest released |
+| Nothing | void | Nothing charged |
+
+Items a shop marks *final sale* (drinks, soup) are charged even if left behind, and their shop is still paid.
+
+### AI tools
+
+| AI tool | Model / service | What it does in LiftDrop | Code |
+|---|---|---|---|
+| **Meta Muse Spark** | `muse-spark-1.1`, Meta API (`/v1/chat/completions`) | The phone-order agent. It answers questions from each shop's dish facts (allergens, sizes, house rules) and the live menu, and acts through tools: `update_basket`, `checkout` (puts the PayPal approve button on the caller's screen), `set_floor`, `order_status`, `end_call`. | `app/api/call`, `lib/call/` |
+| **Meta SAM 3.1** (Segment Anything) | `sam-3.1`, Meta API (`/v1/responses`) | Looks for each dish in the compartment camera's photo as the doors open and as they close, and returns boxes with confidences. A compartment is charged only when SAM and the scale both say it was emptied. | `app/api/vision`, `lib/vision.ts` |
+| **Handoff agent** (LLM) | Muse Spark by default; any OpenAI-compatible model via `LLM_BASE_URL` / `LLM_MODEL` (OpenRouter supported) | When the scale and camera disagree, it reads both and proposes what to charge, wait for, or send to a person. Code clamps the proposal: it can never charge for a compartment the sensors didn't confirm as taken. With no key, a fixed rule set decides. | `lib/handoff.ts` |
+| **AssemblyAI** | Universal Streaming speech-to-text (v3, WebSocket), text-to-speech | Hears the caller in real time and speaks the agent's replies on the phone call. | `lib/voice/`, `app/api/asr-token`, `app/api/tts` |
+
+### Other tools and technologies
+
+- **Next.js 16** (App Router), **React**, **TypeScript**: the customer app, the shop tablet, the ops console and all API routes.
+- **MuJoCo** (compiled to WebAssembly) and **three.js**: the robot, the lift and the tower, simulated and drawn live in the browser. The compartment cameras are rendered from the simulation, and those frames are what SAM 3.1 checks.
+- **Supabase** (Postgres): orders, compartments, the money ledger, handoff decisions and robot heartbeats (`supabase/migrations`).
+- **Vercel**: hosting, plus a daily **Vercel Cron** job that keeps the database awake.
+- **Playwright**: the end-to-end browser test of a full order (`npm run e2e`).
+- **Node's built-in test runner**: unit tests (`npm run check`).
+
+**Sponsor integrations:** none. LiftDrop does not use APIMatic, Postman/Astro or Render.
 
 ## The demo
 
@@ -114,4 +148,4 @@ scripts/        e2e test, cover render, demo footage capture
 
 ## License
 
-MIT
+MIT, an OSI-approved license. See [LICENSE](LICENSE).
