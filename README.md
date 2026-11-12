@@ -20,7 +20,7 @@ A lot of office workers eat at their desks, and the shops in the lobby lose that
 
 One order, start to finish. The AI steps are marked.
 
-1. **Order (AI).** The customer picks from four lobby counters (café, bakery, noodles, salad) in the phone app, or calls the order line. On the call, a Muse Spark agent answers from each shop's dish facts and the live menu, builds the basket with tool calls and puts the PayPal button on the caller's screen.
+1. **Order (AI).** The customer picks from four lobby counters (café, bakery, noodles, salad) in the phone app, or calls the order line. On the call, a Muse Spark agent answers from each shop's dish facts and the live menu, builds the basket with tool calls and puts the PayPal button on the caller's screen. Ordering is hands-free: you can keep typing, reading or walking while you talk, and only tap once at the end to approve in PayPal.
 2. **Hold.** PayPal authorizes the full basket. Nothing is captured yet.
 3. **Collect.** The robot visits each shop. The shop's tablet shows the order, a compartment opens, and staff load it.
 4. **Deliver.** The robot rides the lift to the customer's floor (L20 or L23) and waits at the security gate. The customer unlocks it with a 4-digit code.
@@ -59,7 +59,7 @@ Items a shop marks *final sale* (drinks, soup) are charged even if left behind, 
 
 | AI tool | Model / service | What it does in LiftDrop | Code |
 |---|---|---|---|
-| **Meta Muse Spark** | `muse-spark-1.1`, Meta API (`/v1/chat/completions`) | The phone-order agent. It answers questions from each shop's dish facts (allergens, sizes, house rules) and the live menu, and acts through tools: `update_basket`, `checkout` (puts the PayPal approve button on the caller's screen), `set_floor`, `order_status`, `end_call`. | `app/api/call`, `lib/call/` |
+| **Meta Muse Spark** | `muse-spark-1.1`, Meta API (`/v1/chat/completions`) | The phone-order agent, so customers can order hands-free while they keep working. It answers questions from each shop's dish facts (allergens, sizes, house rules) and the live menu, and acts through tools: `update_basket`, `checkout` (puts the PayPal approve button on the caller's screen), `set_floor`, `order_status`, `end_call`. | `app/api/call`, `lib/call/` |
 | **Meta SAM 3.1** (Segment Anything) | `sam-3.1`, Meta API (`/v1/responses`) | Looks for each dish in the compartment camera's photo as the doors open and as they close, and returns boxes with confidences. A compartment is charged only when SAM and the scale both say it was emptied. | `app/api/vision`, `lib/vision.ts` |
 | **Handoff agent** (LLM) | Muse Spark by default; any OpenAI-compatible model via `LLM_BASE_URL` / `LLM_MODEL` (OpenRouter supported) | When the scale and camera disagree, it reads both and proposes what to charge, wait for, or send to a person. Code clamps the proposal: it can never charge for a compartment the sensors didn't confirm as taken. With no key, a fixed rule set decides. | `lib/handoff.ts` |
 | **AssemblyAI** | Universal Streaming speech-to-text (v3, WebSocket), text-to-speech | Hears the caller in real time and speaks the agent's replies on the phone call. | `lib/voice/`, `app/api/asr-token`, `app/api/tts` |
