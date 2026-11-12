@@ -64,6 +64,19 @@ export default function Vendor() {
     return () => clearInterval(t);
   }, [refresh]);
 
+  // Follow the robot: when it starts waiting for a different bag (a new order, or the next shop of
+  // the same order), switch to that shop. Only on a change, so picking a shop by hand still sticks.
+  const waitingFor = useRef('');
+  useEffect(() => {
+    if (!s) return;
+    const live = s.orders.filter((o) => o.robot_session && ['held', 'collecting'].includes(o.status))
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+    const c = live && s.compartments.filter((x) => x.order_id === live.id && !x.loaded).sort((a, b) => a.id.localeCompare(b.id))[0];
+    const key = c ? `${c.order_id}${c.id}` : '';
+    if (key && key !== waitingFor.current) setShop(c!.shop_id);
+    waitingFor.current = key;
+  }, [s]);
+
   if (!s) return <main className="cp-app vd"><p className="cp-pad cp-soft">Loading…</p></main>;
   const shops = byShopOrder(s.shops);
   const me = shops.find((x) => x.id === shop) ?? shops[0];

@@ -136,6 +136,7 @@ async function atGate(ms, what) {
 const docked = () => waitText(stage, /robot docked/, 150_000, 'robot back at the dock');
 
 // 1. Assistant, take only the croissant.
+await stage.getByLabel('Shops load instantly').check(); // scenarios 1-3 skip the hand loading (scenario 4 covers it)
 log('--- scenario 1: order by phone call, croissant taken, latte left');
 await callOrder();
 await takeBag('A');
