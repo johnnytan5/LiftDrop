@@ -1,30 +1,34 @@
 # LiftDrop
 
-Robot delivery for office towers, paid with PayPal. You order from the shops in the lobby, by app or by phone call. A robot brings the order up the lift to your floor, and you pay only for what you take out.
+LiftDrop is one intelligent AI system that connects lobby shops to every floor of an office tower: voice ordering, a robot that rides the lift, AI vision at your door, and PayPal payments that settle without a human.
+
+AI runs at every step where a person would normally decide something. An agent takes the order on a phone call, a vision model checks what the customer actually took, and another agent decides what to charge when the sensors disagree. PayPal holds the money, charges only for what was taken, and pays each shop its share.
 
 Built for the PayPal AI Hackathon, 2026.
-
-![LiftDrop robot](public/landing-robot.webp)
 
 ![A live run: the customer took the iced latte and left the croissant, so PayPal captured $9.00, released $4.50 of the $13.50 hold, and paid the café $8.55](docs/images/live-run.jpg)
 
 *A live run in `/demo`: the scale and SAM 3.1 agree compartment B was emptied and A was not, so PayPal captures $9.00 of the $13.50 hold, releases $4.50, and pays the shop $8.55.*
 
+![The LiftDrop robot](public/landing-robot.webp)
+
 ## The problem
 
-A lot of office workers eat at their desks, and the shops in the lobby lose that lunch to delivery apps that charge them 15–30% and send a courier who can't get past the security gate. LiftDrop keeps the order in the building: the lobby shops sell to the floors above them, and the robot handles the lift and the gate.
+A lot of office workers eat at their desks, and the shops in the lobby lose that lunch to delivery apps that charge them 15–30% and send a courier who can't get past the security gate. LiftDrop keeps the order in the building and runs it end to end without a courier or a cashier: the lobby shops sell to the floors above them, AI handles the ordering and the checking, a robot handles the lift and the security gate, and PayPal handles the money.
 
 ## How it works
 
-1. **Order.** The customer picks from four lobby counters (café, bakery, noodles, salad) in the phone app, or calls the order line and talks to a voice agent.
+One order, start to finish. The AI steps are marked.
+
+1. **Order (AI).** The customer picks from four lobby counters (café, bakery, noodles, salad) in the phone app, or calls the order line. On the call, a Muse Spark agent answers from each shop's dish facts and the live menu, builds the basket with tool calls and puts the PayPal button on the caller's screen.
 2. **Hold.** PayPal authorizes the full basket. Nothing is captured yet.
 3. **Collect.** The robot visits each shop. The shop's tablet shows the order, a compartment opens, and staff load it.
 4. **Deliver.** The robot rides the lift to the customer's floor (L20 or L23) and waits at the security gate. The customer unlocks it with a 4-digit code.
-5. **Check.** Each compartment has a scale and a camera. Before the doors open and after they close, the weight is compared and SAM 3.1 looks for each dish in the photo.
-6. **Settle.** PayPal captures only what was taken and voids the rest. Items left behind ride back to their shop. Items marked *final sale* (drinks, soup) are charged once made.
-7. **Pay shops.** PayPal Payouts sends each shop its share, less a 5% platform fee, the moment the order settles.
+5. **Check (AI).** Each compartment has a scale and a camera. Before the doors open and after they close, the weight is compared and SAM 3.1 looks for each dish in the photo.
+6. **Decide (AI).** When the scale and camera agree, the charge follows from them. When they disagree, an LLM agent reads both and decides what to charge, whether to wait for another reading, or whether to send the order to a person (Muse Spark, or any OpenAI-compatible model). Code limits it so it can never charge for anything the sensors didn't confirm was taken. With no key set, a fixed rule set decides, and anything it can't decide goes to the ops console.
+7. **Settle.** PayPal captures only what was taken and voids the rest. Items left behind ride back to their shop. Items marked *final sale* (drinks, soup) are charged once made.
+8. **Pay shops.** PayPal Payouts sends each shop its share, less a 5% platform fee, the moment the order settles.
 
-When the scale and camera disagree, an LLM agent reads both and decides (Muse Spark, or any OpenAI-compatible model). With no key set it falls back to a fixed rule set, and anything it can't decide goes to the ops console.
 
 ## How LiftDrop uses PayPal and AI
 
@@ -36,7 +40,7 @@ LiftDrop runs on the **PayPal sandbox** and uses AI in four places: taking order
 |---|---|---|
 | **PayPal JavaScript SDK** (Smart Payment Buttons, `intent=authorize`) | `components/Pay.tsx` | The customer approves the order in PayPal on the phone screen, from the app basket or straight from the phone call. |
 | **OAuth 2.0** | `POST /v1/oauth2/token` | Server-side access token for every API call below. |
-| **Orders v2** | `POST /v2/checkout/orders` (`intent: AUTHORIZE`), `POST /v2/checkout/orders/{id}/authorize` | Holds the full basket on the customer's account. Nothing is charged while the robot delivers. |
+| **Orders v2** | `POST /v2/checkout/orders` (`intent: AUTHORIZE`), `POST /v2/checkout/orders/{id}/authorize` | Holds the full basket on the customer's account. Nothing is charged while the order is on its way. |
 | **Payments v2: capture** | `POST /v2/payments/authorizations/{id}/capture` | When the doors close, charges exactly what the scale and camera agree was taken. A partial capture sets `final_capture: true`, which releases the rest of the hold in the same call. |
 | **Payments v2: void** | `POST /v2/payments/authorizations/{id}/void` | Nothing taken, or the order is cancelled: the whole hold is released and nothing is charged. |
 | **Payouts v1** | `POST /v1/payments/payouts`, `GET /v1/payments/payouts/{batch_id}` | Pays the shops: one batch per order, one item per shop, each shop's share minus the 5% LiftDrop fee. The app polls the batch until PayPal confirms each shop was paid. |
