@@ -3,7 +3,14 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as db from './db.ts';
 import * as paypal from './paypal.ts';
-import { createOrder, authorize, handleEvent, payoutSent, syncPayout, claim, vendorLoaded, customerDone, type SensorEvent } from './orders.ts';
+import { createOrder, authorize, handleEvent as handleOne, unlock, payoutSent, syncPayout, claim, vendorLoaded, customerDone, type SensorEvent } from './orders.ts';
+// The customer types the right code as soon as the robot arrives (the lock has its own test).
+const handleEvent = async (id: string, ev: SensorEvent) => {
+  const r = await handleOne(id, ev);
+  if (ev.type === 'arrived') await unlock(id, (await db.getSecret(id))!.code);
+  return r;
+};
+
 import { suggestCart } from './assistant.ts';
 import { clamp, decide, type Fact } from './handoff.ts';
 
@@ -32,15 +39,15 @@ const take = (c: string): SensorEvent[] => [
   { type: 'door_opened', compartment: c }, { type: 'weight', compartment: c, grams: 0 }, { type: 'door_closed', compartment: c },
 ];
 
-test('both taken: full capture, both shops paid minus 10%', async () => {
+test('both taken: full capture, both shops paid minus 5%', async () => {
   const { order, sum } = await deliver(...take('A'), ...take('B'));
   assert.equal(order.status, 'paid_out');
   assert.equal(order.captured_cents, 1350);
   assert.equal(sum('held'), 1350);
   assert.equal(sum('voided'), 0);
-  assert.equal(sum('paid_out', 'bakery'), 405);
-  assert.equal(sum('paid_out', 'cafe'), 810);
-  assert.equal(sum('fee'), 135);
+  assert.equal(sum('paid_out', 'bakery'), 427);
+  assert.equal(sum('paid_out', 'cafe'), 855);
+  assert.equal(sum('fee'), 68);
 });
 
 test('latte left: capture croissant only, release the rest, pay bakery only', async () => {
@@ -48,9 +55,29 @@ test('latte left: capture croissant only, release the rest, pay bakery only', as
   assert.equal(order.status, 'paid_out');
   assert.equal(order.captured_cents, 450);
   assert.equal(sum('voided'), 900);
-  assert.equal(sum('paid_out', 'bakery'), 405);
+  assert.equal(sum('paid_out', 'bakery'), 427);
   assert.equal(sum('paid_out', 'cafe'), 0);
   assert.match(order.customer_message!, /not charged/);
+});
+
+test('final sale: an uncollected fresh item is still charged and paid to its shop', async () => {
+  await db.updateItem('iced-latte', { final_sale: true });
+  const { order, sum, decisions } = await deliver(...take('A'), { type: 'timeout' });
+  await db.updateItem('iced-latte', { final_sale: false }); // a later toggle doesn't touch this order
+  assert.equal(order.captured_cents, 1350);
+  assert.equal(sum('voided'), 0);
+  assert.equal(sum('paid_out', 'cafe'), 855);
+  assert.deepEqual((decisions.at(-1)!.applied as { kept: object }).kept, { B: 900 });
+  assert.match(order.customer_message!, /final sale/);
+});
+
+test('final sale, nothing taken: only the final-sale item is charged', async () => {
+  await db.updateItem('croissant', { final_sale: true });
+  const { order, sum } = await deliver({ type: 'timeout' });
+  assert.equal(order.captured_cents, 450);
+  assert.equal(sum('voided'), 900);
+  assert.equal(sum('paid_out', 'bakery'), 427);
+  assert.equal(sum('paid_out', 'cafe'), 0);
 });
 
 test('nothing taken: void, no payout', async () => {
@@ -73,7 +100,7 @@ test('ambiguous weight: wait once, then charge only the confirmed compartment', 
 
 test('guardrail: agent cannot charge unconfirmed compartments or wait forever', () => {
   const f = (compartment: string, removed: Fact['removed'], value_cents: number): Fact => ({
-    compartment, removed, value_cents, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true, weight: removed, camera: 'unknown',
+    compartment, removed, value_cents, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true, weight: removed, camera: 'unknown', final_cents: 0, final_items: [],
   });
   const facts = [f('A', true, 450), f('B', 'ambiguous', 900)];
   const greedy = clamp({ action: 'charge', charge_compartments: ['A', 'B', 'Z'], customer_message: '', reason: '' }, facts, 0);
@@ -113,7 +140,7 @@ test('clean handoff never waits on the LLM; unclear one does', async () => {
   process.env.LLM_BASE_URL = 'http://127.0.0.1:9'; // unreachable: an LLM call would fail -> 'fallback'
   try {
     const f = (compartment: string, removed: Fact['removed']): Fact => ({
-      compartment, removed, value_cents: 450, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true, weight: removed, camera: 'unknown',
+      compartment, removed, value_cents: 450, shop_id: 's', items: [], expected_g: 100, start_g: 100, end_g: 0, door_opened: true, weight: removed, camera: 'unknown', final_cents: 0, final_items: [],
     });
     assert.equal((await decide([f('A', true), f('B', false)], 0)).source, 'code');
     assert.equal((await decide([f('A', true), f('B', 'ambiguous')], 0)).source, 'fallback');
@@ -136,7 +163,7 @@ test('payout stays pending until PayPal confirms the batch', async () => {
   assert.ok((await kinds()).includes('payout_pending'));
   assert.ok(!(await kinds()).includes('paid_out'));
   assert.equal((await syncPayout(o.id)).status, 'paid_out');
-  assert.equal((await db.listLedger(o.id)).find((r) => r.kind === 'paid_out')?.amount_cents, 405);
+  assert.equal((await db.listLedger(o.id)).find((r) => r.kind === 'paid_out')?.amount_cents, 427);
 });
 
 test('signals across devices: one sim tab claims, shop loads, customer taps done', async () => {
@@ -195,4 +222,34 @@ test('four shops, two compartments: orders and the assistant stop at two shops',
   const s = await suggestCart('croissant, iced latte, caesar salad and dumplings');
   const shops = new Set((await db.listItems()).filter((i) => s.lines.some((l) => l.item_id === i.id)).map((i) => i.shop_id));
   assert.ok(shops.size >= 1 && shops.size <= 2, `assistant picked ${shops.size} shops`);
+});
+
+test('compartments stay locked until the right code; five wrong tries lock the robot', async () => {
+  const o = await createOrder('L23-gate', [{ item_id: 'croissant', qty: 1 }]);
+  assert.match(o.code, /^\d{4}$/);
+  assert.ok(!JSON.stringify(await db.snapshot()).includes(`"code":"${o.code}"`), 'code leaked into the console snapshot');
+  await authorize(o.id);
+  await handleOne(o.id, { type: 'loaded', compartment: 'A' });
+  await handleOne(o.id, { type: 'arrived' });
+  await assert.rejects(handleOne(o.id, { type: 'door_opened', compartment: 'A' }), /locked/);
+  const wrong = o.code === '0000' ? '1111' : '0000';
+  assert.deepEqual(await unlock(o.id, wrong), { unlocked: false, tries_left: 4 });
+  assert.deepEqual(await unlock(o.id, o.code), { unlocked: true, tries_left: 4 });
+  await handleOne(o.id, { type: 'door_opened', compartment: 'A' }); // now it opens
+
+  const p = await createOrder('L23-gate', [{ item_id: 'croissant', qty: 1 }]);
+  await authorize(p.id);
+  await handleOne(p.id, { type: 'loaded', compartment: 'A' });
+  await handleOne(p.id, { type: 'arrived' });
+  const bad = p.code === '0000' ? '1111' : '0000';
+  for (let i = 0; i < 5; i++) await unlock(p.id, bad);
+  await assert.rejects(unlock(p.id, p.code), /Too many wrong codes/); // even the right one, now
+});
+
+test('payout email note names the order, what the shop sold, and the fee', async () => {
+  const { payoutNote } = await import('./orders.ts');
+  const note = payoutNote('LD-482193', 'L23-gate',
+    [{ name: 'Almond macarons (3) · gluten-free', qty: 1, cents: 650 }, { name: 'Iced latte', qty: 2, cents: 1800, left: true }],
+    { gross: 2450, fee: 123, net: 2327, feeBps: 500 });
+  assert.equal(note, 'LiftDrop order LD-482193, delivered to Level 23. Sold: 1× Almond macarons (3) · gluten-free $6.50, 2× Iced latte $18.00 (final sale, not collected). Sales $24.50, LiftDrop fee 5% -$1.23, paid to you $23.27.');
 });

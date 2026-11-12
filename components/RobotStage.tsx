@@ -9,14 +9,15 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TowerHandle, TowerStatus } from './TowerView.tsx';
-import type { SimEvent, Stop } from '../lib/sim/tower.ts';
-import type { Compartment, LedgerRow, Order, OrderItem, Shop } from '../lib/db.ts';
+import { CODE_WAIT_S, type Floor, type SimEvent, type Stop } from '../lib/sim/tower.ts';
+import type { Compartment, Item, LedgerRow, Order, OrderItem, Shop } from '../lib/db.ts';
+import RobotScreen, { type ScreenMode } from './RobotScreen.tsx';
 import type { CameraCheck } from '../lib/vision.ts';
 
 const TowerView = dynamic(() => import('./TowerView.tsx'), { ssr: false });
 
-type State = { shops: Shop[]; orders: Order[]; compartments: Compartment[]; ledger: LedgerRow[]; order_items: OrderItem[] };
-type Shot = { when: 'before' | 'after'; image: string; result?: CameraCheck; error?: string };
+type State = { shops: Shop[]; items: Item[]; orders: Order[]; compartments: Compartment[]; ledger: LedgerRow[]; order_items: OrderItem[] };
+type Shot = { when: 'before' | 'after' | 'returned'; image: string; result?: CameraCheck; error?: string; shop?: string };
 type Log = { at: string; text: string; ok: boolean };
 
 const $ = (c: number) => `$${(c / 100).toFixed(2)}`;
@@ -37,8 +38,10 @@ function session() {
   } catch { return crypto.randomUUID(); }
 }
 
-/** Lift height (0..3.2 m in the model) shown as the floor the lift is passing. */
-export const floorOf = (s: TowerStatus) => (s.floor === 23 && s.lift > 3.15 ? 23 : Math.round((s.lift / 3.2) * 23));
+/** Lift height shown as the floor the lift is passing: G at 0 m, L20 at 3.2 m, L23 at 6.4 m (21-22 between). */
+export const floorOf = (s: TowerStatus) => (s.lift <= 3.2 ? Math.round((s.lift / 3.2) * 20) : 20 + Math.round(((s.lift - 3.2) / 3.2) * 3));
+/** Which office floor an order goes to, from its location ('L20-gate', 'L23-gate'). */
+export const floorFor = (location: string): Floor => (location.startsWith('L20') ? 20 : 23);
 
 export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => void }) {
   const tower = useRef<TowerHandle | null>(null);
@@ -57,6 +60,11 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
   const [shots, setShots] = useState<Record<string, Shot>>({});
   const dishesRef = useRef<Record<string, string[]>>({});
   const vision = useRef<Record<string, Promise<unknown>>>({});
+  const slotWas = useRef({ A: false, B: false });
+  const stopsRef = useRef<Stop[]>([]);
+  const handLoad = useRef(false); // this trip waits for shop staff to tap Loaded on the robot
+  const [liveCam, setLiveCam] = useState<{ comp: string; image: string } | null>(null);
+  const [robotName, setRobotName] = useState('LiftDrop robot');
 
   // Compartment camera: photograph now, ask SAM 3.1 (via /api/vision), keep the frame for the panel.
   // 'after' runs before door_closed is sent (see onEvent), so the handoff has the camera's verdict.
@@ -81,12 +89,28 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
   const refresh = useCallback(() => fetch('/api/state', { cache: 'no-store' }).then((r) => r.json()).then(setState).catch(() => {}), []);
   useEffect(() => { me.current = session(); refresh(); const t = setInterval(refresh, 1000); return () => clearInterval(t); }, [refresh]);
 
+  // Fleet heartbeat for /ops: where this robot is and what it's doing, once a second.
+  const live = useRef<{ status: TowerStatus | null; speed: number }>({ status: null, speed: 2 });
+  useEffect(() => {
+    const t = setInterval(() => {
+      const st = live.current.status;
+      if (!st) return;
+      fetch('/api/fleet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        session: me.current, phase: st.phase, floor: floorOf(st), x: st.x, y: st.y, grams: st.grams, doors: st.doors,
+        order: activeRef.current, speed: live.current.speed,
+      }) }).then((r) => r.json()).then((j) => { if (j.name) setRobotName(j.name); }).catch(() => {});
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
+
   // Doors closed this round. When all are shut (or the door timed out) the backend has decided:
   // still at_door means the agent asked the customer to check, so the robot reopens and waits.
   const closed = useRef({ count: 0, of: 0 });
+  const [codeUntil, setCodeUntil] = useState(0); // when the robot stops waiting for the gate code
   const onEvent = useCallback((e: SimEvent) => {
     const id = activeRef.current;
     if (!id) return;
+    if (e.type === 'arrived') setCodeUntil(Date.now() + CODE_WAIT_S * 1000);
     if (e.type === 'snapshot') return void photo(e.compartment, 'after'); // photographed now, checked in parallel
     const label = 'compartment' in e ? `${e.type} ${e.compartment}${'grams' in e ? ` · ${e.grams} g` : ''}` : e.type;
     if (e.type === 'door_opened') closed.current.count = 0;
@@ -118,13 +142,16 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
     // One entry per unit: what each compartment camera should find.
     dishesRef.current = Object.fromEntries(comps.map((c) => [c.id, items.filter((l) => l.compartment_id === c.id).flatMap((l) => Array(l.qty).fill(l.item_id))]));
     vision.current = {};
+    for (const k of ['A', 'B'] as const) tower.current.dishes(k, dishesRef.current[k] ?? []);
     setShots({});
     raised.current.clear();
     closed.current = { count: 0, of: stops.length };
+    stopsRef.current = stops;
+    handLoad.current = !autoLoad;
     setActive(o.id);
     setLog([]);
-    tower.current.deliver(stops, { autoLoad, doorTimeout: 90, awaitVerdict: true });
-    note(`${o.id}: ${stops.map((s) => `${s.label} → ${s.comp}`).join(', ')}`);
+    tower.current.deliver(stops, { autoLoad, doorTimeout: 90, awaitVerdict: true, floor: floorFor(o.location), codeWaitMs: CODE_WAIT_S * 1000 });
+    note(`${o.id}: ${stops.map((s) => `${s.label} → ${s.comp}`).join(', ')}, to level ${floorFor(o.location)}`);
   }, [autoLoad]);
 
   // Pick up the next held order nobody is driving, and pass on signals from the phone and the shop.
@@ -151,15 +178,85 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
 
   const order = state?.orders.find((o) => o.id === active);
   const comps = state?.compartments.filter((c) => c.order_id === active) ?? [];
-  const atDoor = !!status?.phase.startsWith('at door');
+  const atDoor = !!status?.phase.startsWith('at the gate');
   const sum = (k: string) => state?.ledger.filter((l) => l.order_id === active && l.kind === k).reduce((s, l) => s + l.amount_cents, 0) ?? 0;
   const floor = status ? floorOf(status) : 0;
 
+  // What the robot's own screen shows, from its phase and the order it carries.
+  const phase = status?.phase ?? 'idle';
+  // Leftovers handed back at a shop: once the robot leaves the counter, film that compartment
+  // again so the panel shows it empty (a local frame; nothing for SAM to check).
+  const prevPhase = useRef(phase);
+  useEffect(() => {
+    const was = prevPhase.current;
+    prevPhase.current = phase;
+    const stop = was.startsWith('handing back at ') && phase !== was ? stopsRef.current.find((x) => was === `handing back at ${x.label}`) : undefined;
+    const img = stop && tower.current?.photo(stop.comp as 'A' | 'B', dishesRef.current[stop.comp] ?? []);
+    if (stop && img) setShots((s) => ({ ...s, [stop.comp]: { when: 'returned', image: img, shop: stop.label } }));
+  }, [phase]);
+  const loadingAt = active && handLoad.current ? stopsRef.current.find((x) => phase === `loading at ${x.label}`) : undefined;
+  const itemName = (id: string) => state?.items.find((i) => i.id === id)?.name ?? id;
+  const returningAt = active && handLoad.current ? stopsRef.current.find((x) => phase === `handing back at ${x.label}`) : undefined;
+  const itemsIn = (comp: string) => (state?.order_items ?? []).filter((l) => l.order_id === active && l.compartment_id === comp).map((l) => `${l.qty}× ${itemName(l.item_id)}`);
+  const dest = order ? floorFor(order.location) : floor;
+  const collecting = /^(to |loading at )/.test(phase) && !/lift|gate/.test(phase);
+  const screen: ScreenMode = !ready ? { kind: 'status', title: 'Starting up', text: 'Loading the robot…' }
+    : loadingAt ? {
+      kind: 'load', shop: loadingAt.label, comp: loadingAt.comp,
+      items: itemsIn(loadingAt.comp),
+      done: !!comps.find((c) => c.id === loadingAt.comp)?.vendor_loaded_at,
+    }
+    : returningAt ? { kind: 'return', shop: returningAt.label, comp: returningAt.comp, items: itemsIn(returningAt.comp) }
+    : active && phase === 'calling customer' ? { kind: 'code', floor, until: codeUntil }
+    : active && atDoor && phase === 'at the gate' ? { kind: 'open', comps: comps.map((c) => c.id) }
+    : phase === 'idle' ? { kind: 'status', title: 'Ready', text: 'Docked and charging. Waiting for an order.' }
+    : { kind: 'status', title: /return|dock|handing back/.test(phase) ? 'Heading back' : !active ? 'Busy' : collecting ? 'Collecting an order' : `Delivering to Level ${dest}`, text: `${phase[0].toUpperCase()}${phase.slice(1)}. Compartments locked.` };
+  const loadComp = loadingAt?.comp ?? returningAt?.comp;
+  // Inside camera, live, while staff load this compartment by hand (rendered here, not sent to SAM).
+  // After the robot moves on it keeps filming that compartment a moment, so staff see the bag inside.
+  const lastLoad = useRef<string | null>(null);
+  useEffect(() => {
+    const comp = loadComp ?? lastLoad.current;
+    if (!comp) return;
+    lastLoad.current = loadComp ?? null;
+    const shoot = () => { const img = tower.current?.photo(comp as 'A' | 'B', dishesRef.current[comp] ?? []); if (img) setLiveCam({ comp, image: img }); };
+    shoot();
+    const t = setInterval(shoot, 400);
+    const off = loadComp ? 0 : window.setTimeout(() => { clearInterval(t); setLiveCam(null); }, 2500);
+    return () => { clearInterval(t); clearTimeout(off); };
+  }, [loadComp]);
+
   return (
     <div className="stage">
+      <RobotScreen
+        name={robotName} mode={screen}
+        onLoaded={(c) => { if (active) post(`/api/orders/${active}`, { action: 'loaded', compartment: c }).then(() => { note(`staff tapped Loaded on the robot: ${c}`); refresh(); }).catch((e) => note(e.message, false)); }}
+        onReturned={(c) => { tower.current?.raise(`returned:${c}`); note(`shop staff took back compartment ${c}`); }}
+        onCode={async (code) => {
+          const r = await post(`/api/orders/${active}`, { action: 'unlock', code });
+          note(r.unlocked ? 'right code: compartments unlocked' : `wrong code (${r.tries_left} tries left)`, r.unlocked);
+          if (r.unlocked) tower.current?.raise('unlock');
+          return r;
+        }}
+        onDone={() => { if (active) post(`/api/orders/${active}`, { action: 'done' }).then(refresh).catch((e) => note(e.message, false)); }}
+      />
+      {liveCam && (
+        <figure className="livecam" aria-label={`Compartment ${liveCam.comp} inside camera, live`}>
+          <img src={liveCam.image} alt="" />
+          <figcaption><span className="rec" aria-hidden="true" />LIVE · compartment {liveCam.comp} camera</figcaption>
+        </figure>
+      )}
       <TowerView
         onReady={(h) => { tower.current = h; h.speed(speed); setReady(true); }}
-        onStatus={(s) => { setStatus(s); onRobot?.(s); }}
+        onStatus={(s) => {
+          // A bag left its compartment at the gate: re-shoot that camera now, so the panel shows what
+          // the tower view shows instead of the photo from when the doors opened.
+          for (const k of ['A', 'B'] as const) {
+            if (slotWas.current[k] && !s.inSlot[k] && activeRef.current && s.phase.startsWith('at the gate')) void photo(k, 'after');
+            slotWas.current[k] = s.inSlot[k];
+          }
+          live.current.status = s; setStatus(s); onRobot?.(s);
+        }}
         onEvent={onEvent}
         onDone={(r) => { note(`robot docked${r.leftovers.length ? `; returned ${r.leftovers.join(', ')} to the shop` : ''}`); activeRef.current = null; }}
         onError={(m) => note(m, false)}
@@ -167,15 +264,15 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
 
       <div className="stage-top">
         <div className="lift-panel" aria-live="polite">
-          <span className="led small-led"><span className="led-arrow">{status?.phase.includes('lift') ? (status.floor === 23 ? '▼' : '▲') : ''}</span><span className="led-num">{floor === 0 ? 'G' : floor}</span></span>
+          <span className="led small-led"><span className="led-arrow">{status?.phase.includes('↑') ? '▲' : ''}</span><span className="led-num">{floor === 0 ? 'G' : floor}</span></span>
           <span className="phase">{!ready ? 'Starting MuJoCo…' : status?.phase === 'idle' ? 'Docked, waiting for an order' : status?.phase}</span>
         </div>
         <div className="stage-ctrl">
           <span className="ctrl-label">Speed</span>
           {[1, 2, 4].map((x) => (
-            <button key={x} aria-pressed={speed === x} onClick={() => { setSpeed(x); tower.current?.speed(x); }}>{x}×</button>
+            <button key={x} aria-pressed={speed === x} onClick={() => { setSpeed(x); live.current.speed = x; tower.current?.speed(x); }}>{x}×</button>
           ))}
-          <label title="Off: the robot waits at each counter until the shop taps Loaded on /vendor">
+          <label title="Off: the robot waits at each counter until shop staff tap Loaded on its screen">
             <input type="checkbox" checked={autoLoad} onChange={(e) => setAutoLoad(e.target.checked)} /> Shops load instantly
           </label>
         </div>
@@ -203,14 +300,14 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
             return (
               <figure key={k} className="cam">
                 <div className="cam-frame">
-                  <img src={sh.image} alt={`Compartment ${k} camera, ${sh.when === 'before' ? 'doors opening' : 'doors closing'}`} />
+                  <img src={sh.image} alt={`Compartment ${k} camera, ${sh.when === 'before' ? 'doors opening' : sh.when === 'returned' ? `after handing back at ${sh.shop}` : 'doors closing'}`} />
                   {sh.result && Object.entries(sh.result.found).map(([slot, b]) => b && (
                     <span key={slot} className="cam-box" style={{ left: `${(b.x1 / b.w) * 100}%`, top: `${(b.y1 / b.h) * 100}%`, width: `${((b.x2 - b.x1) / b.w) * 100}%`, height: `${((b.y2 - b.y1) / b.h) * 100}%` }} />
                   ))}
                 </div>
                 <figcaption>
                   <span className="comp-tag">{k}</span>
-                  {sh.error ? 'camera check failed' : !sh.result ? 'checking…'
+                  {sh.when === 'returned' ? `empty · back at ${sh.shop}` : sh.error ? 'camera check failed' : !sh.result ? 'checking…'
                     : sh.when === 'before' ? `sees ${seen} of ${found.length}`
                     : seen === 0 ? 'empty: taken' : seen === found.length ? 'still there' : `${found.length - seen} of ${found.length} taken`}
                 </figcaption>
@@ -232,14 +329,9 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
         </div>
         <div className="money" aria-label="Money for this order">
           {order ? <>
-            {order.payment_mode === 'charge' ? <>
-              <div><span>Paid now</span><b>{$(sum('captured'))}</b></div>
-              <div><span>Refunded</span><b>{$(sum('refunded'))}</b></div>
-            </> : <>
-              <div><span>Held</span><b>{$(sum('held'))}</b></div>
-              <div><span>Charged</span><b>{$(sum('captured'))}</b></div>
-              <div><span>Released</span><b>{$(sum('voided'))}</b></div>
-            </>}
+            <div><span>Held</span><b>{$(sum('held'))}</b></div>
+            <div><span>Charged</span><b>{$(sum('captured'))}</b></div>
+            <div><span>Released</span><b>{$(sum('voided'))}</b></div>
             <div><span>Shops paid</span><b>{$(sum('paid_out'))}{sum('payout_pending') > sum('paid_out') ? ' …' : ''}</b></div>
           </> : <span className="quiet">Money for the current order shows here.</span>}
         </div>

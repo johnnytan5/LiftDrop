@@ -9,7 +9,7 @@ export type Pack = 'iced_cup' | 'hot_cup' | 'fruit_cup' | 'soup_bowl' | 'salad_b
 export const PACK: Record<string, Pack> = {
   'iced-latte': 'iced_cup', americano: 'hot_cup', 'fruit-cup': 'fruit_cup',
   'chicken-noodle': 'soup_bowl', caesar: 'salad_box',
-  croissant: 'croissant', 'pain-choc': 'pastry_box', dumplings: 'dumpling_box',
+  croissant: 'croissant', 'pain-choc': 'pastry_box', macarons: 'pastry_box', dumplings: 'dumpling_box',
 };
 // ponytail: prompts picked on rendered compartment frames (/camera-check); re-check them there
 // after changing a dish's model in components/compartmentCam.ts.

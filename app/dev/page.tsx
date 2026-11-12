@@ -50,7 +50,7 @@ export default function Dev() {
       {err && <p role="alert" style={{ color: '#b00020' }}>{err}</p>}
 
       <section style={card}>
-        <h2 style={{ marginTop: 0 }}>New order (L23 pantry)</h2>
+        <h2 style={{ marginTop: 0 }}>New order (L23 gate)</h2>
         {s.items.map((i) => (
           <label key={i.id} style={{ display: 'inline-block', marginRight: 16 }}>
             {i.name} {$(i.price_cents)}{' '}
@@ -60,7 +60,7 @@ export default function Dev() {
         ))}
         <div style={{ marginTop: 12 }}>
           <button style={btn} onClick={run(() => post('/api/orders', {
-            location: 'L23-pantry',
+            location: 'L23-gate',
             cart: Object.entries(cart).filter(([, q]) => q > 0).map(([item_id, qty]) => ({ item_id, qty })),
           }))}>Create order</button>
           <button style={btn} onClick={run(() => post('/api/reset', {}))}>Reset all</button>
@@ -86,7 +86,7 @@ export default function Dev() {
                   2. {c.shop_id} loads {c.id}
                 </button>
               ))}
-              <button style={btn} onClick={run(() => ev(o.id, { type: 'arrived', floor: 23 }))}>3. Arrive L23</button>
+              <button style={btn} onClick={run(() => ev(o.id, { type: 'arrived', floor: 23 }))}>3. Arrive at L23 gate</button>
             </div>
             <div>
               {comps.map((c) => (

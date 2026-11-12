@@ -8,7 +8,7 @@ import { photograph, FRAME } from '../../components/compartmentCam.ts';
 import type { CameraCheck } from '../../lib/vision.ts';
 
 const CASES: string[][] = [
-  ['iced-latte'], ['americano'], ['fruit-cup'], ['chicken-noodle'], ['caesar'], ['croissant'], ['pain-choc'], ['dumplings'],
+  ['iced-latte'], ['americano'], ['fruit-cup'], ['chicken-noodle'], ['caesar'], ['croissant'], ['pain-choc'], ['macarons'], ['dumplings'],
   ['croissant', 'croissant'], ['iced-latte', 'americano'], ['chicken-noodle', 'dumplings'], ['caesar', 'fruit-cup'],
 ];
 type Row = { dishes: string[]; taken: boolean; image: string; result?: CameraCheck; error?: string };

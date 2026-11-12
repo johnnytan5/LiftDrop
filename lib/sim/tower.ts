@@ -8,6 +8,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Mj = any;
 
+/** How long the customer has to type the gate code. Real seconds, so sim speed can't shorten it. */
+export const CODE_WAIT_S = 300;
+
 export type Comp = 'A' | 'B';
 export type Shop = 'cafe' | 'bakery' | 'noodles' | 'greens';
 export type Stop = { comp: Comp; shop: Shop; grams: number; label: string };
@@ -31,10 +34,14 @@ const ALPHA_MAX = 3;        // rad/s²
 const LIFT_SPEED = 0.6;     // m/s
 const PLATE_TARE_G = 50;    // load-cell plate mass in the XML
 const WEIGHT_STEP_G = 15;   // smallest change reported as a new weight
-const L23_Z = 3.2;
 
 const LOBBY = { dock: [1, -2] as XY, corridor: [1, 2.6] as XY, liftDoor: [2.5, 0] as XY, liftIn: [4.5, 0] as XY };
-const L23 = { liftOut: [3.0, 0] as XY, bend: [1.7, -1.5] as XY, approach: [1.7, -2.75] as XY, pantry: [2.4, -2.75] as XY };
+// Office floors (storeys are 3.2 m; floors 21-22 aren't modelled). The robot never enters an office:
+// it parks in the painted bay outside the security gate, side on, compartments facing the lift lobby.
+export type Floor = 20 | 23;
+export const FLOOR_Z: Record<Floor, number> = { 20: 3.2, 23: 6.4 };
+const UP = { liftOut: [3.0, 0] as XY, bay: [1.85, 1.15] as XY, handedOver: [2.9, 2.3] as XY };
+const floorAt = (z: number) => (z > 4.8 ? 23 : z > 1.6 ? 20 : 0);
 // Stop on y=2.6 heading west: the compartments (robot's -y side) face the counter to the north.
 export const SHOPS: Record<Shop, { stop: XY; counter: [number, number, number] }> = {
   cafe: { stop: [0.1, 2.6], counter: [-0.2, 3.3, 0.95] },
@@ -78,7 +85,7 @@ export class Tower {
     for (const n of ['robot', 'bag_A', 'bag_B', 'lift']) this.id[`joint:${n}`] = look(O.mjOBJ_JOINT, n);
     for (const n of ['door_A', 'door_B', 'lift']) this.id[`act:${n}`] = look(O.mjOBJ_ACTUATOR, n);
     for (const n of ['scale_A', 'scale_B', 'door_A', 'door_B', 'lift']) this.id[`sensor:${n}`] = look(O.mjOBJ_SENSOR, n);
-    for (const n of ['slot_A', 'slot_B', 'pantry_drop']) this.id[`site:${n}`] = look(O.mjOBJ_SITE, n);
+    for (const n of ['slot_A', 'slot_B']) this.id[`site:${n}`] = look(O.mjOBJ_SITE, n);
   }
 
   // ---------- state readers ----------
@@ -112,7 +119,7 @@ export class Tower {
   status() {
     const p = this.pose();
     return {
-      phase: this.phase, time: this.time, x: p.x, y: p.y, z: p.z, yaw: p.yaw, floor: p.z > L23_Z / 2 ? 23 : 0,
+      phase: this.phase, time: this.time, x: p.x, y: p.y, z: p.z, yaw: p.yaw, floor: floorAt(p.z),
       lift: this.liftZ(), grams: this.displayGrams(),
       doors: { A: this.sensor('door_A'), B: this.sensor('door_B') },
       inSlot: { A: this.inSlot('A'), B: this.inSlot('B') },
@@ -233,8 +240,9 @@ export class Tower {
   /** Customer lifts the bag out (fraction 1), or a fault: only part of the weight leaves. */
   take(c: Comp, fraction = 1) {
     if (fraction >= 1) {
-      const [x, y, z] = this.sitePos('pantry_drop');
-      this.placeBody(`bag_${c}`, [x + (c === 'A' ? -0.25 : 0.25), y, z]);
+      // The customer carries it through the gate into the office.
+      const [x, y] = UP.handedOver;
+      this.placeBody(`bag_${c}`, [x + (c === 'A' ? -0.2 : 0.2), y, FLOOR_Z[floorAt(this.pose().z) as Floor] + 0.06]);
     } else {
       const b = this.id[`body:bag_${c}`];
       this.m.body_mass[b] = this.m.body_mass[b] * (1 - fraction);
@@ -266,8 +274,12 @@ export class Tower {
 
   /** awaitVerdict: after closing the doors, wait for raise('settled') or raise('reopen') (the
    *  backend's handoff agent asked the customer to check a compartment) before leaving. */
-  async deliver(stops: Stop[], opts: { autoLoad?: boolean; doorTimeout?: number; awaitVerdict?: boolean } = {}) {
-    const { autoLoad = true, doorTimeout = 45, awaitVerdict = false } = opts;
+  /** Compartments stay locked at the gate until raise('unlock') (the customer's code, checked by
+   *  the backend); no code within codeTimeout (sim seconds), or codeWaitMs (real time, when
+   *  set), and the robot takes everything back. */
+  async deliver(stops: Stop[], opts: { autoLoad?: boolean; doorTimeout?: number; awaitVerdict?: boolean; floor?: Floor; codeTimeout?: number; codeWaitMs?: number } = {}) {
+    const { autoLoad = true, doorTimeout = 45, awaitVerdict = false, floor = 23, codeTimeout = 120, codeWaitMs } = opts;
+    const realWait = codeWaitMs !== undefined; // waits on people and the backend run on the wall clock
     const route = VISIT_ORDER.flatMap((shop) => stops.filter((s) => s.shop === shop));
     this.stage(route);
 
@@ -287,19 +299,21 @@ export class Tower {
       from = [];
     }
 
-    // 2. Lift to level 23.
+    // 2. Lift to the customer's floor.
     this.phase = 'to lift';
     await this.goto([[SHOPS[route.at(-1)!.shop].stop[0] + 0.5, 1.2], LOBBY.liftDoor, LOBBY.liftIn], 0);
-    this.phase = 'lift ↑ L23';
-    await this.rideLift(L23_Z);
+    this.phase = `lift ↑ L${floor}`;
+    await this.rideLift(FLOOR_Z[floor]);
 
-    // 3. Pantry handoff.
-    this.phase = 'to pantry';
-    await this.goto([L23.liftOut, L23.bend, L23.approach, L23.pantry], 0);
-    this.emit({ type: 'arrived', floor: 23 });
-    let timedOut = false;
-    for (let round = 0; ; round++) {
-      this.phase = round ? 'at door, customer checking' : 'at door';
+    // 3. Handoff outside the office's security gate.
+    this.phase = 'to the gate';
+    await this.goto([UP.liftOut, UP.bay], 0);
+    this.emit({ type: 'arrived', floor });
+    this.phase = 'calling customer';
+    let timedOut = !(await Promise.race([this.signal('unlock').then(() => true), (codeWaitMs ? new Promise<void>((r) => setTimeout(r, codeWaitMs)) : this.sleep(codeTimeout)).then(() => false)]));
+    if (timedOut) this.emit({ type: 'timeout' });
+    for (let round = 0; !timedOut; round++) {
+      this.phase = round ? 'at the gate, customer checking' : 'at the gate';
       this.flags.delete('done');
       for (const s of route) {
         await this.door(s.comp, true);
@@ -320,22 +334,28 @@ export class Tower {
       if (timedOut) this.emit({ type: 'timeout' });
       if (!awaitVerdict) break;
       this.phase = 'checking handoff';
-      const verdict = await Promise.race([this.signal('settled').then(() => 'settled'), this.signal('reopen').then(() => 'reopen'), this.sleep(60).then(() => 'settled')]);
+      const verdict = await Promise.race([this.signal('settled').then(() => 'settled'), this.signal('reopen').then(() => 'reopen'),
+        // Real seconds when the caller says so: the backend (SAM, the agent) doesn't speed up with the sim.
+        (realWait ? new Promise<void>((r) => setTimeout(r, 60_000)) : this.sleep(60)).then(() => 'settled')]);
       this.flags.delete('settled'); this.flags.delete('reopen');
       if (verdict === 'settled' || round >= 2) break;
     }
 
     // 4. Home, returning anything left in a compartment to its shop.
     this.phase = 'returning';
-    await this.goto([L23.approach, L23.bend, L23.liftOut, [4.5, 0]], 0);
+    await this.goto([UP.liftOut, [4.5, 0]], 0);
     await this.rideLift(0);
     const leftovers = route.filter((s) => this.grams(s.comp) > WEIGHT_STEP_G);
     let back: XY[] = [LOBBY.liftDoor];
     for (const s of [...leftovers].reverse()) {
       this.phase = `returning item to ${s.label}`;
       await this.goto([...back, [SHOPS[s.shop].stop[0] + 0.5, 1.2], SHOPS[s.shop].stop], Math.PI);
+      this.phase = `handing back at ${s.label}`;
       await this.door(s.comp, true);
+      // Staff tap "Taken back" on the robot's screen; nobody comes in 2 min and it leaves it on the counter.
+      await (autoLoad ? this.sleep(1.5) : Promise.race([this.signal(`returned:${s.comp}`), this.sleep(120)]));
       this.placeBody(`bag_${s.comp}`, SHOPS[s.shop].counter);
+      await this.sleep(0.6);
       await this.door(s.comp, false);
       back = [];
     }

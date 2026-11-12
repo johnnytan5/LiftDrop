@@ -1,10 +1,17 @@
-// Compartment cameras (SAM 3.1 results) as evidence, and the "pay now, refund what's left" mode.
-// Mocks only: node --test lib/camera-and-refunds.test.ts
+// Compartment cameras (SAM 3.1 results) as evidence, and unclaimed orders released.
+// Mocks only: node --test lib/camera.test.ts
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as db from './db.ts';
 import * as paypal from './paypal.ts';
-import { createOrder, authorize, handleEvent, payoutSent, syncPayout, type SensorEvent } from './orders.ts';
+import { createOrder, authorize, handleEvent as handleOne, unlock, payoutSent, syncPayout, type SensorEvent } from './orders.ts';
+// The customer types the right code as soon as the robot arrives (the lock has its own test).
+const handleEvent = async (id: string, ev: SensorEvent) => {
+  const r = await handleOne(id, ev);
+  if (ev.type === 'arrived') await unlock(id, (await db.getSecret(id))!.code);
+  return r;
+};
+
 import { combine } from './handoff.ts';
 import { seen, type CameraCheck } from './vision.ts';
 
@@ -36,8 +43,8 @@ test('weight and camera must agree before anything is charged', () => {
   assert.equal(combine('ambiguous', 'gone'), 'ambiguous');
 });
 
-async function deliver(mode: 'hold' | 'charge', ...evs: (SensorEvent | ((id: string) => Promise<unknown>))[]) {
-  const o = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }, { item_id: 'iced-latte', qty: 1 }], mode);
+async function deliver(...evs: (SensorEvent | ((id: string) => Promise<unknown>))[]) {
+  const o = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }, { item_id: 'iced-latte', qty: 1 }]);
   const held = await authorize(o.id);
   for (const ev of [{ type: 'loaded', compartment: 'A' }, { type: 'loaded', compartment: 'B' }, { type: 'arrived', floor: 23 }, ...evs] as (SensorEvent | ((id: string) => Promise<unknown>))[]) {
     if (typeof ev === 'function') await ev(o.id); else await handleEvent(o.id, ev);
@@ -53,7 +60,7 @@ const open = (c: string, grams: number): SensorEvent[] => [{ type: 'door_opened'
 const close = (c: string): SensorEvent => ({ type: 'door_closed', compartment: c });
 
 test('camera still sees the croissant although the scale dropped: ask, never charge it', async () => {
-  const { order, decisions } = await deliver('hold',
+  const { order, decisions } = await deliver(
     ...open('A', 0), camera('A', { 'croissant#1': true }), close('A'),
     { type: 'timeout' },  // round 1: the agent asks the customer to check
     { type: 'timeout' }); // round 2: still unclear -> nothing charged
@@ -63,68 +70,26 @@ test('camera still sees the croissant although the scale dropped: ask, never cha
 });
 
 test('scale and camera agree: charge the croissant, release the latte', async () => {
-  const { order, sum } = await deliver('hold',
+  const { order, sum } = await deliver(
     ...open('A', 0), ...open('B', 450), camera('A', { 'croissant#1': false }), camera('B', { 'iced-latte#1': true }), close('A'), close('B'));
   assert.equal(order.status, 'paid_out');
   assert.equal(order.captured_cents, 450);
   assert.equal(sum('voided'), 900);
-  assert.equal(sum('paid_out', 'bakery'), 405);
+  assert.equal(sum('paid_out', 'bakery'), 427);
 });
 
-test('pay now: full charge at order, latte left -> refund $9.00, bakery paid', async () => {
-  const { held, order, sum } = await deliver('charge',
-    ...open('A', 0), ...open('B', 450), camera('A', { 'croissant#1': false }), camera('B', { 'iced-latte#1': true }), close('A'), close('B'));
-  assert.equal(held.status, 'held');
-  assert.equal(held.captured_cents, 1350); // charged up front
-  assert.equal(sum('held'), 0);
-  assert.equal(sum('captured'), 1350);
-  assert.equal(sum('refunded'), 900);
-  assert.equal(order.captured_cents, 450);   // net
-  assert.equal(order.status, 'paid_out');
-  assert.equal(sum('paid_out', 'bakery'), 405);
-  assert.equal(sum('paid_out', 'cafe'), 0);
-  assert.match(order.customer_message!, /refunded \$9\.00/);
-});
-
-test('pay now: nothing taken -> refunded in full, no payout', async () => {
-  const { order, sum } = await deliver('charge', { type: 'timeout' });
-  assert.equal(order.status, 'voided');
-  assert.equal(sum('refunded'), 1350);
-  assert.equal(sum('paid_out'), 0);
-  assert.match(order.customer_message!, /Refunded \$13\.50/);
-});
-
-test('pay now: everything taken -> no refund', async () => {
-  const { order, sum } = await deliver('charge', ...open('A', 0), ...open('B', 0), close('A'), close('B'));
-  assert.equal(sum('refunded'), 0);
-  assert.equal(order.captured_cents, 1350);
-  assert.equal(order.status, 'paid_out');
-});
-
-test('mock PayPal refuses refunds beyond the capture', async () => {
-  const o = await paypal.createOrder(1000, 'r-create');
-  const { authorizationId } = await paypal.authorizeOrder(o.id, 'r-auth');
-  const cap = await paypal.captureAuthorization(authorizationId, 1000, 'r-cap');
-  await paypal.refundCapture(cap.id, 600, 'r-ref1');
-  await assert.rejects(paypal.refundCapture(cap.id, 500, 'r-ref2'), /exceeds/);
-  assert.deepEqual(await paypal.refundCapture(cap.id, 600, 'r-ref1'), await paypal.refundCapture(cap.id, 600, 'r-ref1')); // idempotent
-});
-
-test('a paid order no robot picks up is cancelled after 15 minutes: hold released or payment refunded', async () => {
+test('a paid order no robot picks up is cancelled after 15 minutes: hold released', async () => {
   const { expireUnclaimed, UNCLAIMED_MS } = await import('./orders.ts');
-  const hold = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }], 'hold');
-  const charge = await createOrder('L23-pantry', [{ item_id: 'iced-latte', qty: 1 }], 'charge');
-  const claimed = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }], 'hold');
-  for (const o of [hold, charge, claimed]) await authorize(o.id);
+  const hold = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }]);
+  const claimed = await createOrder('L23-pantry', [{ item_id: 'croissant', qty: 1 }]);
+  for (const o of [hold, claimed]) await authorize(o.id);
   await db.updateOrder(claimed.id, { robot_session: 'tab-1' });
   await expireUnclaimed(Date.now(), true); // too young: nothing happens
   assert.equal((await db.getOrder(hold.id)).status, 'held');
   await expireUnclaimed(Date.now() + UNCLAIMED_MS + 1000, true);
-  const [h, c, k] = await Promise.all([hold, charge, claimed].map((o) => db.getOrder(o.id)));
+  const [h, k] = await Promise.all([hold, claimed].map((o) => db.getOrder(o.id)));
   assert.equal(h.status, 'voided');
   assert.match(h.customer_message!, /Nothing was charged/);
-  assert.equal(c.status, 'voided');
-  assert.equal((await db.listLedger(c.id)).filter((r) => r.kind === 'refunded').reduce((a, r) => a + r.amount_cents, 0), 900);
   assert.equal(k.status, 'held'); // a robot has it: leave it alone
   const { STUCK_MS } = await import('./orders.ts');
   await expireUnclaimed(Date.now() + STUCK_MS + 1000, true); // its robot never finished

@@ -9,32 +9,32 @@ export type OrderStatus =
   | 'captured' | 'partially_captured' | 'voided' | 'returning' | 'paying_out' | 'paid_out' | 'failed';
 
 export type Shop = { id: string; name: string; fee_bps: number; payout_email: string | null };
-export type Item = { id: string; shop_id: string; name: string; price_cents: number; grams: number; stock: number };
+export type Item = { id: string; shop_id: string; name: string; price_cents: number; grams: number; stock: number; final_sale?: boolean };
 export type Order = {
   id: string; location: string; status: OrderStatus; total_cents: number; captured_cents: number;
   paypal_order_id: string | null; authorization_id: string | null; capture_id: string | null;
   payout_batch_id: string | null; customer_message: string | null; created_at: string;
   robot_session: string | null; customer_done_at: string | null;
-  payment_mode: PaymentMode;
 };
 /** hold: authorize, capture only what was taken. charge: capture all at order, refund what was left. */
-export type PaymentMode = 'hold' | 'charge';
 export type Compartment = {
   order_id: string; id: string; shop_id: string; value_cents: number; expected_g: number;
   loaded: boolean; door_opened: boolean; door_closed: boolean; start_g: number | null; end_g: number | null;
   vendor_loaded_at: string | null;
   vision_before: CameraCheck | null; vision_after: CameraCheck | null;
 };
-export type OrderItem = { order_id: string; item_id: string; compartment_id: string; qty: number };
+export type OrderItem = { order_id: string; item_id: string; compartment_id: string; qty: number; final_sale?: boolean };
 export type Event = { id: number; order_id: string; type: string; payload: Record<string, unknown>; at: string };
-export type LedgerKind = 'held' | 'captured' | 'voided' | 'fee' | 'payout_pending' | 'paid_out' | 'refunded';
+export type LedgerKind = 'held' | 'captured' | 'voided' | 'fee' | 'payout_pending' | 'paid_out';
 export type LedgerRow = {
   id: number; order_id: string; shop_id: string | null; kind: LedgerKind;
   amount_cents: number; paypal_ref: string | null; at: string;
 };
+/** Never part of an order read: only createOrder (once, to the buyer) and unlock see it. */
+export type Secret = { order_id: string; code: string; tries: number; unlocked_at: string | null };
 export type Decision = {
   id: number; order_id: string; facts: unknown; proposed: unknown; applied: unknown;
-  source: 'code' | 'llm' | 'fallback'; reason: string; at: string;
+  source: 'code' | 'llm' | 'fallback' | 'operator'; reason: string; at: string;
 };
 
 const sb = process.env.SUPABASE_URL
@@ -57,20 +57,21 @@ const withEmail = (s: Shop): Shop => ({ ...s, payout_email: process.env[`PAYOUT_
 
 type Store = {
   shops: Shop[]; items: Item[]; orders: Order[]; compartments: Compartment[];
-  order_items: OrderItem[]; events: Event[]; ledger: LedgerRow[]; decisions: Decision[]; seq: number;
+  order_items: OrderItem[]; events: Event[]; ledger: LedgerRow[]; decisions: Decision[]; secrets: Secret[]; seq: number;
 };
 
 function seed(): Store {
   return {
     shops: [
-      { id: 'bakery', name: 'Crumb Bakery', fee_bps: 1000, payout_email: null },
-      { id: 'cafe', name: 'Level G Café', fee_bps: 1000, payout_email: null },
-      { id: 'noodles', name: 'Noodle House', fee_bps: 1000, payout_email: null },
-      { id: 'greens', name: 'Green Bowl', fee_bps: 1000, payout_email: null },
+      { id: 'bakery', name: 'Crumb Bakery', fee_bps: 500, payout_email: null },
+      { id: 'cafe', name: 'Level G Café', fee_bps: 500, payout_email: null },
+      { id: 'noodles', name: 'Noodle House', fee_bps: 500, payout_email: null },
+      { id: 'greens', name: 'Green Bowl', fee_bps: 500, payout_email: null },
     ],
     items: [
       { id: 'croissant', shop_id: 'bakery', name: 'Butter croissant', price_cents: 450, grams: 80, stock: 20 },
       { id: 'pain-choc', shop_id: 'bakery', name: 'Pain au chocolat', price_cents: 500, grams: 90, stock: 15 },
+      { id: 'macarons', shop_id: 'bakery', name: 'Almond macarons (3) · gluten-free', price_cents: 650, grams: 60, stock: 20 },
       { id: 'iced-latte', shop_id: 'cafe', name: 'Iced latte', price_cents: 900, grams: 450, stock: 30 },
       { id: 'americano', shop_id: 'cafe', name: 'Hot americano', price_cents: 600, grams: 350, stock: 30 },
       { id: 'chicken-noodle', shop_id: 'noodles', name: 'Chicken noodle soup', price_cents: 1250, grams: 600, stock: 20 },
@@ -78,7 +79,7 @@ function seed(): Store {
       { id: 'caesar', shop_id: 'greens', name: 'Chicken caesar salad', price_cents: 1100, grams: 350, stock: 15 },
       { id: 'fruit-cup', shop_id: 'greens', name: 'Fresh fruit cup', price_cents: 550, grams: 200, stock: 20 },
     ],
-    orders: [], compartments: [], order_items: [], events: [], ledger: [], decisions: [], seq: 0,
+    orders: [], compartments: [], order_items: [], events: [], ledger: [], decisions: [], secrets: [], seq: 0,
   };
 }
 
@@ -97,11 +98,19 @@ export async function listShops() {
   return (sb ? await q<Shop[]>(sb.from('shops').select()) : db().shops).map(withEmail);
 }
 export async function listItems() { return sb ? q<Item[]>(sb.from('items').select().order('id')) : db().items; }
+export async function updateItem(id: string, patch: Pick<Item, 'final_sale'>) {
+  if (sb) return q<Item>(sb.from('items').update(patch).eq('id', id).select().single());
+  const it = db().items.find((i) => i.id === id);
+  if (!it) throw new Error(`no item ${id}`);
+  return Object.assign(it, patch);
+}
 
 // Time-based so ids (and the PayPal idempotency keys built from them) never repeat across resets.
-export async function newOrderId() { return `o_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`; }
+// Short and readable on receipts and PayPal ("LD-482193").
+// ponytail: random 6 digits; a clash fails the insert (primary key). Use a sequence past ~1,000 orders a day.
+export async function newOrderId() { return `LD-${String(Math.floor(Math.random() * 900_000) + 100_000)}`; }
 
-type NewOrder = Pick<Order, 'id' | 'location' | 'total_cents' | 'payment_mode'>;
+type NewOrder = Pick<Order, 'id' | 'location' | 'total_cents'>;
 
 export async function insertOrder(o: NewOrder, comps: Compartment[], items: OrderItem[]) {
   if (sb) {
@@ -155,6 +164,22 @@ export async function claimOrder(id: string, session: string) {
   return { ...Object.assign(o, { robot_session: session }) };
 }
 
+export async function insertSecret(order_id: string, code: string) {
+  if (sb) { await q(sb.from('order_secrets').insert({ order_id, code })); return; }
+  db().secrets.push({ order_id, code, tries: 0, unlocked_at: null });
+}
+
+export async function getSecret(orderId: string): Promise<Secret | null> {
+  if (sb) return q<Secret | null>(sb.from('order_secrets').select().eq('order_id', orderId).maybeSingle());
+  const x = db().secrets.find((s) => s.order_id === orderId);
+  return x ? { ...x } : null;
+}
+
+export async function updateSecret(orderId: string, patch: Partial<Secret>) {
+  if (sb) { await q(sb.from('order_secrets').update(patch).eq('order_id', orderId)); return; }
+  Object.assign(db().secrets.find((s) => s.order_id === orderId)!, patch);
+}
+
 export async function listOrdersByStatus(status: OrderStatus) {
   return sb ? q<Order[]>(sb.from('orders').select().eq('status', status)) : db().orders.filter((o) => o.status === status);
 }
@@ -185,6 +210,12 @@ export async function insertEvent(orderId: string, type: string, payload: Record
   const e: Event = { id: nextId(), order_id: orderId, type, payload, at: now() };
   db().events.push(e);
   return e;
+}
+
+export async function listEvents(orderIds: string[], types: string[]) {
+  if (!orderIds.length) return [];
+  if (sb) return q<Event[]>(sb.from('events').select().in('order_id', orderIds).in('type', types).order('id'));
+  return db().events.filter((e) => orderIds.includes(e.order_id) && types.includes(e.type));
 }
 
 export async function insertLedger(rows: Omit<LedgerRow, 'id' | 'at'>[]) {

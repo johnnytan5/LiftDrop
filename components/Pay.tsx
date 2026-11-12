@@ -18,33 +18,33 @@ function loadPayPal(clientId: string) {
   }));
 }
 
-export default function Pay({ lines, config, label, mode = 'hold', className = 'cp-pay', onStarted, onError }: {
-  lines: { item_id: string; qty: number }[]; config: Config | null; label: string; mode?: 'hold' | 'charge'; className?: string;
-  onStarted: (id: string) => void; onError: (m: string) => void;
+export default function Pay({ lines, config, label, location = 'L23-gate', className = 'cp-pay', onStarted, onError }: {
+  lines: { item_id: string; qty: number }[]; config: Config | null; label: string; location?: string; className?: string;
+  onStarted: (id: string, code: string) => void; onError: (m: string) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const linesRef = useRef(lines);
   linesRef.current = lines;
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
+  const locRef = useRef(location);
+  locRef.current = location;
   const cb = useRef({ onStarted, onError }); // parent callbacks change identity; the PayPal button must not re-render
   cb.current = { onStarted, onError };
   const [busy, setBusy] = useState(false);
 
-  const create = useCallback(() => api<Order>('/api/orders', { location: 'L23-pantry', cart: linesRef.current, payment_mode: modeRef.current }), []);
+  const create = useCallback(() => api<Order & { code: string }>('/api/orders', { location: locRef.current, cart: linesRef.current }), []);
 
   useEffect(() => {
     if (config?.mode !== 'sandbox' || !config.clientId || !box.current) return;
-    let ours: string | null = null;
+    let ours: string | null = null, code = '';
     let closed = false;
     const el = box.current;
     loadPayPal(config.clientId).then((paypal) => {
       if (closed) return;
       const b = paypal.Buttons({
         style: { layout: 'horizontal', shape: 'pill', label: 'pay', height: 48, tagline: false },
-        createOrder: async () => { const o = await create(); ours = o.id; return o.paypal_order_id; },
+        createOrder: async () => { const o = await create(); ours = o.id; code = o.code; return o.paypal_order_id; },
         onApprove: async () => {
-          try { await api('/api/authorize', { order_id: ours }); cb.current.onStarted(ours!); }
+          try { await api('/api/authorize', { order_id: ours }); cb.current.onStarted(ours!, code); }
           catch (e) { cb.current.onError((e as Error).message); }
         },
         onCancel: () => cb.current.onError('Payment cancelled. Nothing was held.'),
@@ -64,7 +64,7 @@ export default function Pay({ lines, config, label, mode = 'hold', className = '
       try {
         const o = await create();
         await api('/api/authorize', { order_id: o.id });
-        onStarted(o.id);
+        onStarted(o.id, o.code);
       } catch (e) { onError((e as Error).message); setBusy(false); }
     }}>{busy ? 'Holding payment…' : label}</button>
   );

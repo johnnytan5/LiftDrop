@@ -5,6 +5,9 @@ import type { Item, Shop } from '../db.ts';
 import type { ToolDef } from '../llm.ts';
 
 export type Cart = Record<string, number>;
+export type OfficeFloor = 20 | 23;
+export const OFFICES: Record<OfficeFloor, string> = { 20: 'Orbit Labs', 23: 'Halden Capital' };
+export type Caller = { name: string; floor: OfficeFloor };
 export type CallCtx = {
   items: Item[];
   shops: Shop[];
@@ -12,6 +15,8 @@ export type CallCtx = {
   setCart(c: Cart): void;
   checkout(): void;           // show the PayPal approve card
   status(): object | null;    // the live order, if there is one
+  caller(): Caller;           // the signed-in account and the floor on screen
+  setFloor(f: OfficeFloor): void;
 };
 
 const MAX_QTY = 5;
@@ -59,6 +64,12 @@ export function runTool(name: string, args: unknown, ctx: CallCtx): object {
       ctx.checkout();
       return { basket: basketView(ctx.items, ctx.shops, cart), next: 'An "Approve in PayPal" button is now on their screen. PayPal holds the total; they are charged only for what they take out of the robot.' };
     }
+    case 'set_floor': {
+      const f = Number(a.floor);
+      if (f !== 20 && f !== 23) return { error: 'LiftDrop delivers to Level 20 (Orbit Labs) or Level 23 (Halden Capital) only. Ask which.' };
+      ctx.setFloor(f);
+      return { floor: f, office: OFFICES[f] };
+    }
     case 'order_status':
       return ctx.status() ?? { error: 'No order has been paid yet.' };
     case 'end_call':
@@ -81,6 +92,9 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   }, ['changes']),
   fn('checkout', 'The customer has everything they want: put the PayPal approve button on their screen.'),
+  fn('set_floor', 'Change the delivery floor when the caller says it is not the one on file.', {
+    floor: { type: 'integer', enum: [20, 23] },
+  }, ['floor']),
   fn('order_status', 'Where the paid order and the robot are now.'),
   fn('end_call', 'Hang up once the customer says goodbye or needs nothing else.'),
 ];

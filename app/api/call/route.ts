@@ -2,7 +2,7 @@
 // runs the tools against the basket; this adds the system prompt and keeps the key here.
 // Adapted from MuseConcierge app/api/agent.
 import { chat, sparkConfigured, type ChatMessage } from '../../../lib/llm.ts';
-import { TOOL_DEFS, basketView, type Cart } from '../../../lib/call/tools.ts';
+import { TOOL_DEFS, basketView, type Caller, type Cart } from '../../../lib/call/tools.ts';
 import { callPrompt } from '../../../lib/call/prompt.ts';
 import * as db from '../../../lib/db.ts';
 
@@ -11,7 +11,9 @@ const MAX_CHARS = 4000;
 
 export async function POST(req: Request) {
   if (!sparkConfigured()) return Response.json({ error: 'The order line is offline (no Muse Spark key).' }, { status: 503 });
-  const { messages, cart } = (await req.json()) as { messages?: ChatMessage[]; cart?: Cart };
+  const { messages, cart, caller } = (await req.json()) as { messages?: ChatMessage[]; cart?: Cart; caller?: Partial<Caller> };
+  // Goes into the system prompt: keep it to a short plain name and a real floor.
+  const who: Caller = { name: String(caller?.name ?? '').replace(/[^\p{L} .'-]/gu, '').slice(0, 40).trim() || 'the caller', floor: caller?.floor === 20 ? 20 : 23 };
   if (!Array.isArray(messages) || !messages.length || messages.length > MAX_MESSAGES
     || messages.some((m) => m.role === 'system' || JSON.stringify(m).length > MAX_CHARS)) {
     return Response.json({ error: 'bad messages' }, { status: 400 });
@@ -22,7 +24,7 @@ export async function POST(req: Request) {
     const safeCart = Object.fromEntries(Object.entries(cart ?? {}).filter(([id, q]) => items.some((i) => i.id === id) && Number(q) > 0));
     const message = await chat({
       spark: true,
-      messages: [{ role: 'system', content: callPrompt(items, shops, basketView(items, shops, safeCart)) }, ...messages],
+      messages: [{ role: 'system', content: callPrompt(items, shops, basketView(items, shops, safeCart), who) }, ...messages],
       tools: TOOL_DEFS,
       maxTokens: 1000,
       timeoutMs: 15000,

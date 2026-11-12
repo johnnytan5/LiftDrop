@@ -144,6 +144,22 @@ function compartment(): THREE.Group {
   return g;
 }
 
+/** The dishes as packed, laid out left to right (a second row behind if there are many), origin
+ *  at the compartment floor. The camera photographs this; the tower view draws it on the bag. */
+export function dishGroup(dishes: string[]): THREE.Group {
+  const g = new THREE.Group();
+  const shown = dishes.filter((id) => PACK[id]).slice(0, 4);
+  shown.forEach((id, i) => {
+    const perRow = Math.min(shown.length, 2);
+    const row = Math.floor(i / 2), col = i % 2;
+    const d = BUILD[PACK[id]]();
+    d.position.set(perRow === 1 ? 0 : col === 0 ? -0.06 : 0.06, row ? 0.06 : -0.01, 0);
+    d.rotation.z = (i * 0.7) % 1.2;
+    g.add(d);
+  });
+  return g;
+}
+
 /** Render what's in one compartment right now. dishes: item ids, one entry per unit. */
 export function photograph(renderer: THREE.WebGLRenderer, dishes: string[]): string {
   const scene = new THREE.Scene();
@@ -152,16 +168,7 @@ export function photograph(renderer: THREE.WebGLRenderer, dishes: string[]): str
   const lamp = new THREE.PointLight(0xfff4e0, 0.6, 0, 0);
   lamp.position.set(0, -0.05, INNER.h - 0.02);
   scene.add(lamp, compartment());
-  // Lay dishes out left to right, a second row behind if there are many.
-  const shown = dishes.filter((id) => PACK[id]).slice(0, 4);
-  shown.forEach((id, i) => {
-    const perRow = Math.min(shown.length, 2);
-    const row = Math.floor(i / 2), col = i % 2;
-    const d = BUILD[PACK[id]]();
-    d.position.set(perRow === 1 ? 0 : col === 0 ? -0.06 : 0.06, row ? 0.06 : -0.01, 0);
-    d.rotation.z = (i * 0.7) % 1.2;
-    scene.add(d);
-  });
+  scene.add(dishGroup(dishes));
   // Wide camera at the top front edge of the compartment (the door side), looking in.
   const cam = new THREE.PerspectiveCamera(78, FRAME.w / FRAME.h, 0.01, 2);
   cam.up.set(0, 0, 1);

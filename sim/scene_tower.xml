@@ -1,17 +1,20 @@
 <mujoco model="liftdrop_tower">
   <!--
-    LiftDrop tower: ground-floor retail (four shop counters) and level 23 (office pantry),
-    joined by a lift. Only these two floors are modelled; L23 is a slab 3.2 m above the lobby
-    so a three-quarter camera sees both. Metres, z up, lobby floor at z=0.
+    LiftDrop at Halden Tower: the lobby (four shop units and the security desk), level 20 and
+    level 23, joined by a glass lift. Floors 21 and 22 aren't modelled: storeys are 3.2 m, so L20 is
+    at z 3.2 and L23 at z 6.4. Metres, z up, lobby floor at z=0.
+    The robot never enters an office: on L20 and L23 it parks in the painted bay outside the
+    security gate (1.85, 1.15), and the customer comes out to it.
 
     Collision bits: world = 1, lift car = 2, robot conaffinity = 3 (touches both).
-    The car and the world never collide, so the car can pass through the L23 slab's shaft hole
-    and sit flush with either floor.
+    The car and the world never collide, so the car passes through the slabs' shaft holes and
+    sits flush with each floor.
 
-    Layout (x east, y north):
-      lobby   dock (1,-2) · counters along y=3.3: café 0.1, bakery -1.95, noodles -4, greens -6.05 · lift (4.5, 0)
-      L23     pantry table (3.35, -2.75), robot parks at (2.4, -2.75), slab x 1..7
-  -->
+    Layout (x east, y north), camera looking north-east from the south-west:
+      lobby   dock (1,-2) · restaurants along y=3..7.5 (pickup windows on y=3): café 0.1, bakery -1.95, noodles -4, greens -6.05
+              security desk (-1.8,-2) · security office x -7..-4.4, y -5..-2.6 · lift (4.5, 0)
+      L20/L23 slab x 1..7 · gate line y=1.6 (speed gate x 2.4..3.4) · desks behind, y 2..5
+-->
   <compiler autolimits="true"/>
   <option timestep="0.002"/>
   <visual>
@@ -20,19 +23,35 @@
   </visual>
 
   <asset>
-    <texture name="lobby_tiles" type="2d" builtin="checker" width="512" height="512" rgb1="0.82 0.80 0.76" rgb2="0.74 0.72 0.68"/>
-    <material name="lobby_floor" texture="lobby_tiles" texrepeat="12 10"/>
+    <texture name="lobby_tiles" type="2d" builtin="checker" width="512" height="512" rgb1="0.86 0.84 0.80" rgb2="0.80 0.78 0.74"/>
+    <material name="lobby_floor" texture="lobby_tiles" texrepeat="14 12"/>
+    <material name="slab" rgba="0.80 0.79 0.76 1"/>
     <material name="carpet" rgba="0.36 0.42 0.50 1"/>
+    <material name="shop_floor" rgba="0.62 0.52 0.42 1"/>
+    <material name="kitchen_floor" rgba="0.70 0.71 0.72 1"/>
     <material name="wall" rgba="0.92 0.91 0.88 1"/>
+    <material name="ceiling" rgba="0.97 0.97 0.96 1"/>
     <material name="glass" rgba="0.6 0.8 0.9 0.25"/>
     <material name="steel" rgba="0.55 0.58 0.62 1"/>
+    <material name="trim" rgba="0.72 0.58 0.32 1"/>
+    <material name="stone" rgba="0.90 0.89 0.86 1"/>
     <material name="lift_car" rgba="0.70 0.72 0.75 1"/>
     <material name="wood" rgba="0.55 0.38 0.24 1"/>
+    <material name="desk" rgba="0.93 0.92 0.90 1"/>
     <material name="bakery" rgba="0.85 0.55 0.25 1"/>
     <material name="cafe" rgba="0.30 0.22 0.18 1"/>
     <material name="noodles" rgba="0.70 0.18 0.15 1"/>
     <material name="greens" rgba="0.35 0.60 0.30 1"/>
-    <material name="pantry" rgba="0.25 0.55 0.45 1"/>
+    <material name="gate" rgba="0.16 0.18 0.22 1"/>
+    <material name="gate_flap" rgba="0.95 0.45 0.25 0.55"/>
+    <material name="bay" rgba="0.96 0.75 0.15 1"/>
+    <material name="slab_paint" rgba="0.80 0.79 0.76 1"/>
+    <material name="l20" rgba="0.20 0.45 0.70 1"/>
+    <material name="l23" rgba="0.94 0.39 0.25 1"/>
+    <material name="planter" rgba="0.35 0.33 0.32 1"/>
+    <material name="leaf" rgba="0.28 0.52 0.30 1"/>
+    <material name="uniform" rgba="0.12 0.16 0.28 1"/>
+    <material name="skin" rgba="0.80 0.62 0.48 1"/>
     <material name="shell_white" rgba="0.95 0.95 0.97 1"/>
     <material name="shell_grey" rgba="0.75 0.76 0.78 1"/>
     <material name="shell_accent" rgba="0.10 0.45 0.85 1"/>
@@ -54,50 +73,251 @@
   <include file="liftdrop_bot.xml"/>
 
   <worldbody>
-    <light name="sun" pos="0 0 9" dir="0.2 0.3 -1" diffuse="0.7 0.7 0.7" castshadow="false"/>
+    <light name="sun" pos="0 0 12" dir="0.2 0.3 -1" diffuse="0.7 0.7 0.7" castshadow="false"/>
 
     <!-- ===== Lobby (z = 0) ===== -->
-    <geom name="lobby_floor" type="plane" size="7 5 0.05" material="lobby_floor" class="static"/>
-    <!-- low perimeter walls so a camera above sees in -->
-    <geom class="static" pos="0 5 0.6" size="7 0.05 0.6" material="wall"/>
-    <geom class="static" pos="-7 0 0.6" size="0.05 5 0.6" material="wall"/>
+    <geom name="lobby_floor" type="plane" pos="0 1.25 0" size="7 6.25 0.05" material="lobby_floor" class="static"/>
+    <geom class="static" pos="-2.94 7.5 1.42" size="4.07 0.05 1.42" material="wall"/>
+    <geom class="static" pos="4.06 5 1.55" size="2.94 0.05 1.55" material="wall"/>
+    <geom class="static" pos="-7 -1 0.6" size="0.05 4 0.6" material="wall"/>
+    <geom class="static" pos="-7 5.25 1.42" size="0.05 2.25 1.42" material="wall"/>
     <geom class="static" pos="0 -5 0.3" size="7 0.05 0.3" material="glass"/>
-
-    <!-- Shop counters along the north wall, east to west; the robot stops at y=2.6 facing west. -->
-    <!-- Café counter and back bar -->
-    <geom name="cafe_counter" class="static" pos="0.1 3.3 0.45" size="0.8 0.3 0.45" material="cafe"/>
-    <geom class="decor" pos="0.1 3.3 0.92" size="0.82 0.32 0.02" material="wood"/>
-    <geom class="decor" pos="0.1 4.7 1.0" size="0.8 0.25 1.0" material="cafe"/>
-    <geom class="decor" type="cylinder" pos="-0.3 3.3 1.06" size="0.12 0.12" material="steel"/>
-    <!-- Bakery counter with a glass display -->
-    <geom name="bakery_counter" class="static" pos="-1.95 3.3 0.45" size="0.8 0.3 0.45" material="bakery"/>
-    <geom class="decor" pos="-1.95 3.3 1.05" size="0.75 0.28 0.12" material="glass"/>
-    <geom class="decor" pos="-1.95 4.7 1.0" size="0.8 0.25 1.0" material="bakery"/>
-    <!-- Noodle counter with a steam pot -->
-    <geom name="noodles_counter" class="static" pos="-4 3.3 0.45" size="0.8 0.3 0.45" material="noodles"/>
-    <geom class="decor" pos="-4 3.3 0.92" size="0.82 0.32 0.02" material="wood"/>
-    <geom class="decor" pos="-4 4.7 1.0" size="0.8 0.25 1.0" material="noodles"/>
-    <geom class="decor" type="cylinder" pos="-3.6 3.35 1.05" size="0.16 0.12" material="steel"/>
-    <!-- Salad bar with a sneeze guard -->
-    <geom name="greens_counter" class="static" pos="-6.05 3.3 0.45" size="0.8 0.3 0.45" material="greens"/>
-    <geom class="decor" pos="-6.05 3.45 1.1" size="0.75 0.02 0.18" material="glass"/>
-    <geom class="decor" pos="-6.05 4.7 1.0" size="0.8 0.25 1.0" material="greens"/>
     <!-- Robot dock -->
-    <geom class="decor" pos="1 -2 0.002" size="0.35 0.35 0.002" rgba="0.1 0.45 0.85 1"/>
+    <geom class="decor" pos="1 -2 0.004" size="0.35 0.35 0.004" rgba="0.1 0.45 0.85 1"/>
 
-    <!-- ===== Glass panoramic lift: shaft x 3.75..5.25, y -0.75..0.75, open on the west (-x) side,
-         up to L23's ceiling so the camera can watch the ride ===== -->
-    <geom class="decor" pos="4.5 0.8 2.2" size="0.8 0.03 2.2" material="glass"/>
-    <geom class="decor" pos="4.5 -0.8 2.2" size="0.8 0.03 2.2" material="glass"/>
-    <geom class="decor" pos="5.3 0 2.2" size="0.03 0.8 2.2" material="glass"/>
-    <geom class="decor" pos="4.5 0 4.42" size="0.83 0.83 0.03" material="steel"/>
-    <geom class="decor" type="cylinder" pos="3.77 0.77 2.2" size="0.035 2.2" material="steel"/>
-    <geom class="decor" type="cylinder" pos="3.77 -0.77 2.2" size="0.035 2.2" material="steel"/>
-    <geom class="decor" type="cylinder" pos="5.27 0.77 2.2" size="0.035 2.2" material="steel"/>
-    <geom class="decor" type="cylinder" pos="5.27 -0.77 2.2" size="0.035 2.2" material="steel"/>
+    <!-- Restaurants along the north wall, east to west; the robot stops at y=2.6 facing west, at each takeaway window. -->
+    <geom class="static" pos="1.125 5.25 1.42" size="0.05 2.25 1.42" material="wall"/>
+    <geom class="static" pos="-0.925 5.25 1.42" size="0.05 2.25 1.42" material="wall"/>
+    <geom class="static" pos="-2.975 5.25 1.42" size="0.05 2.25 1.42" material="wall"/>
+    <geom class="static" pos="-5.025 5.25 1.42" size="0.05 2.25 1.42" material="wall"/>
+    <!-- cafe restaurant: x -0.925..1.125, y 3..7.5 -->
+    <geom class="decor" pos="0.1 5.25 0.004" size="1 2.25 0.004" material="shop_floor"/>
+    <geom class="decor" pos="0.1 6.85 0.01" size="1 0.63 0.004" material="kitchen_floor"/>
+    <geom name="cafe_counter" class="static" pos="0.1 3.3 0.45" size="0.45 0.3 0.45" material="cafe"/>
+    <geom class="decor" pos="0.1 3.3 0.92" size="0.47 0.32 0.02" material="stone"/>
+    <geom class="decor" pos="-0.638 3 1.1" size="0.287 0.025 1.1" material="glass"/>
+    <geom class="decor" pos="0.1 3 1.85" size="0.45 0.025 0.35" material="glass"/>
+    <geom class="decor" pos="0.6 3 1.1" size="0.05 0.025 1.1" material="glass"/>
+    <geom class="decor" pos="0.66 3 1.1" size="0.02 0.04 1.1" material="trim"/>
+    <geom class="decor" pos="1.08 3 1.1" size="0.02 0.04 1.1" material="trim"/>
+    <geom class="decor" pos="0.87 3 2.15" size="0.23 0.04 0.05" material="trim"/>
+    <geom class="decor" pos="1.05 3.22 1.05" size="0.015 0.2 1" material="glass"/>
+    <geom class="decor" pos="0.87 2.8 0.006" size="0.22 0.15 0.004" material="gate"/>
+    <geom class="decor" pos="0.1 3 2.5" size="1.03 0.1 0.3" material="cafe"/>
+    <geom class="decor" pos="0.1 2.75 2.17" size="1.03 0.27 0.025" material="cafe"/>
+    <geom class="decor" pos="0.1 2.49 2.1" size="1.03 0.015 0.07" material="cafe"/>
+    <geom class="decor" pos="-0.8 4.6 0.22" size="0.1 0.75 0.22" material="cafe"/>
+    <geom class="decor" pos="-0.88 4.6 0.55" size="0.03 0.75 0.2" material="cafe"/>
+    <geom class="decor" type="cylinder" pos="-0.45 4.2 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-0.45 4.2 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-0.1 4.2 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="0.04 4.2 0.7" size="0.02 0.15 0.22" material="wood"/>
+    <geom class="decor" type="cylinder" pos="-0.45 5 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-0.45 5 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-0.1 5 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="0.04 5 0.7" size="0.02 0.15 0.22" material="wood"/>
+    <geom class="decor" type="cylinder" pos="0.6 4.55 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="0.6 4.55 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="0.6 4.2 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="0.6 4.06 0.7" size="0.15 0.02 0.22" material="wood"/>
+    <geom class="decor" pos="0.6 4.9 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="0.6 5.04 0.7" size="0.15 0.02 0.22" material="wood"/>
+    <geom class="decor" pos="0.1 5.75 0.5" size="0.9 0.22 0.5" material="wood"/>
+    <geom class="decor" pos="0.1 5.75 1.01" size="0.92 0.24 0.015" material="stone"/>
+    <geom class="decor" pos="-0.5 5.7 1.1" size="0.1 0.08 0.08" material="screen_dark"/>
+    <geom class="decor" pos="-0.45 6.15 1.95" size="0.47 0.04 0.65" material="wall"/>
+    <geom class="decor" pos="0.85 6.15 1.95" size="0.27 0.04 0.65" material="wall"/>
+    <geom class="decor" pos="0.2 6.15 2.45" size="0.18 0.04 0.15" material="wall"/>
+    <geom class="decor" pos="-0.45 6.1 1.95" size="0.4 0.015 0.25" material="screen_dark"/>
+    <geom class="decor" pos="0.85 6.1 1.95" size="0.2 0.015 0.25" material="screen_dark"/>
+    <geom class="decor" pos="0.1 7.2 0.45" size="0.95 0.28 0.45" material="steel"/>
+    <geom class="decor" pos="0.1 7.25 2.1" size="0.6 0.22 0.18" material="steel"/>
+    <geom class="decor" pos="-0.68 6.6 0.9" size="0.2 0.25 0.9" material="shell_white"/>
+    <geom class="decor" pos="0.55 5.75 1.17" size="0.18 0.14 0.16" material="steel"/>
+    <geom class="decor" type="cylinder" pos="0.25 5.75 1.08" size="0.05 0.07" material="screen_dark"/>
+    <!-- bakery restaurant: x -2.975..-0.925, y 3..7.5 -->
+    <geom class="decor" pos="-1.95 5.25 0.004" size="1 2.25 0.004" material="shop_floor"/>
+    <geom class="decor" pos="-1.95 6.85 0.01" size="1 0.63 0.004" material="kitchen_floor"/>
+    <geom name="bakery_counter" class="static" pos="-1.95 3.3 0.45" size="0.45 0.3 0.45" material="bakery"/>
+    <geom class="decor" pos="-1.95 3.3 0.92" size="0.47 0.32 0.02" material="stone"/>
+    <geom class="decor" pos="-2.688 3 1.1" size="0.287 0.025 1.1" material="glass"/>
+    <geom class="decor" pos="-1.95 3 1.85" size="0.45 0.025 0.35" material="glass"/>
+    <geom class="decor" pos="-1.45 3 1.1" size="0.05 0.025 1.1" material="glass"/>
+    <geom class="decor" pos="-1.39 3 1.1" size="0.02 0.04 1.1" material="trim"/>
+    <geom class="decor" pos="-0.97 3 1.1" size="0.02 0.04 1.1" material="trim"/>
+    <geom class="decor" pos="-1.18 3 2.15" size="0.23 0.04 0.05" material="trim"/>
+    <geom class="decor" pos="-1 3.22 1.05" size="0.015 0.2 1" material="glass"/>
+    <geom class="decor" pos="-1.18 2.8 0.006" size="0.22 0.15 0.004" material="gate"/>
+    <geom class="decor" pos="-1.95 3 2.5" size="1.03 0.1 0.3" material="bakery"/>
+    <geom class="decor" pos="-1.95 2.75 2.17" size="1.03 0.27 0.025" material="bakery"/>
+    <geom class="decor" pos="-1.95 2.49 2.1" size="1.03 0.015 0.07" material="bakery"/>
+    <geom class="decor" pos="-2.85 4.6 0.22" size="0.1 0.75 0.22" material="bakery"/>
+    <geom class="decor" pos="-2.93 4.6 0.55" size="0.03 0.75 0.2" material="bakery"/>
+    <geom class="decor" type="cylinder" pos="-2.5 4.2 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-2.5 4.2 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-2.15 4.2 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-2.01 4.2 0.7" size="0.02 0.15 0.22" material="wood"/>
+    <geom class="decor" type="cylinder" pos="-2.5 5 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-2.5 5 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-2.15 5 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-2.01 5 0.7" size="0.02 0.15 0.22" material="wood"/>
+    <geom class="decor" type="cylinder" pos="-1.45 4.55 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-1.45 4.55 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-1.45 4.2 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-1.45 4.06 0.7" size="0.15 0.02 0.22" material="wood"/>
+    <geom class="decor" pos="-1.45 4.9 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-1.45 5.04 0.7" size="0.15 0.02 0.22" material="wood"/>
+    <geom class="decor" pos="-1.95 5.75 0.5" size="0.9 0.22 0.5" material="wood"/>
+    <geom class="decor" pos="-1.95 5.75 1.01" size="0.92 0.24 0.015" material="stone"/>
+    <geom class="decor" pos="-2.55 5.7 1.1" size="0.1 0.08 0.08" material="screen_dark"/>
+    <geom class="decor" pos="-2.5 6.15 1.95" size="0.47 0.04 0.65" material="wall"/>
+    <geom class="decor" pos="-1.2 6.15 1.95" size="0.27 0.04 0.65" material="wall"/>
+    <geom class="decor" pos="-1.85 6.15 2.45" size="0.18 0.04 0.15" material="wall"/>
+    <geom class="decor" pos="-2.5 6.1 1.95" size="0.4 0.015 0.25" material="screen_dark"/>
+    <geom class="decor" pos="-1.2 6.1 1.95" size="0.2 0.015 0.25" material="screen_dark"/>
+    <geom class="decor" pos="-1.95 7.2 0.45" size="0.95 0.28 0.45" material="steel"/>
+    <geom class="decor" pos="-1.95 7.25 2.1" size="0.6 0.22 0.18" material="steel"/>
+    <geom class="decor" pos="-2.73 6.6 0.9" size="0.2 0.25 0.9" material="shell_white"/>
+    <geom class="decor" pos="-1.75 5.62 1.15" size="0.6 0.2 0.14" material="glass"/>
+    <geom class="decor" pos="-1.75 5.62 1.06" size="0.55 0.16 0.02" material="bakery"/>
+    <geom class="decor" pos="-1.4 6.9 0.75" size="0.35 0.3 0.75" material="steel"/>
+    <!-- noodles restaurant: x -5.025..-2.975, y 3..7.5 -->
+    <geom class="decor" pos="-4 5.25 0.004" size="1 2.25 0.004" material="shop_floor"/>
+    <geom class="decor" pos="-4 6.85 0.01" size="1 0.63 0.004" material="kitchen_floor"/>
+    <geom name="noodles_counter" class="static" pos="-4 3.3 0.45" size="0.45 0.3 0.45" material="noodles"/>
+    <geom class="decor" pos="-4 3.3 0.92" size="0.47 0.32 0.02" material="stone"/>
+    <geom class="decor" pos="-4.737 3 1.1" size="0.287 0.025 1.1" material="glass"/>
+    <geom class="decor" pos="-4 3 1.85" size="0.45 0.025 0.35" material="glass"/>
+    <geom class="decor" pos="-3.5 3 1.1" size="0.05 0.025 1.1" material="glass"/>
+    <geom class="decor" pos="-3.44 3 1.1" size="0.02 0.04 1.1" material="trim"/>
+    <geom class="decor" pos="-3.02 3 1.1" size="0.02 0.04 1.1" material="trim"/>
+    <geom class="decor" pos="-3.23 3 2.15" size="0.23 0.04 0.05" material="trim"/>
+    <geom class="decor" pos="-3.05 3.22 1.05" size="0.015 0.2 1" material="glass"/>
+    <geom class="decor" pos="-3.23 2.8 0.006" size="0.22 0.15 0.004" material="gate"/>
+    <geom class="decor" pos="-4 3 2.5" size="1.03 0.1 0.3" material="noodles"/>
+    <geom class="decor" pos="-4 2.75 2.17" size="1.03 0.27 0.025" material="noodles"/>
+    <geom class="decor" pos="-4 2.49 2.1" size="1.03 0.015 0.07" material="noodles"/>
+    <geom class="decor" pos="-4.9 4.6 0.22" size="0.1 0.75 0.22" material="noodles"/>
+    <geom class="decor" pos="-4.98 4.6 0.55" size="0.03 0.75 0.2" material="noodles"/>
+    <geom class="decor" type="cylinder" pos="-4.55 4.2 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-4.55 4.2 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-4.2 4.2 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-4.06 4.2 0.7" size="0.02 0.15 0.22" material="wood"/>
+    <geom class="decor" type="cylinder" pos="-4.55 5 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-4.55 5 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-4.2 5 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-4.06 5 0.7" size="0.02 0.15 0.22" material="wood"/>
+    <geom class="decor" type="cylinder" pos="-3.5 4.55 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-3.5 4.55 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-3.5 4.2 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-3.5 4.06 0.7" size="0.15 0.02 0.22" material="wood"/>
+    <geom class="decor" pos="-3.5 4.9 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-3.5 5.04 0.7" size="0.15 0.02 0.22" material="wood"/>
+    <geom class="decor" pos="-4 5.75 0.5" size="0.9 0.22 0.5" material="wood"/>
+    <geom class="decor" pos="-4 5.75 1.01" size="0.92 0.24 0.015" material="stone"/>
+    <geom class="decor" pos="-4.6 5.7 1.1" size="0.1 0.08 0.08" material="screen_dark"/>
+    <geom class="decor" pos="-4.55 6.15 1.95" size="0.47 0.04 0.65" material="wall"/>
+    <geom class="decor" pos="-3.25 6.15 1.95" size="0.27 0.04 0.65" material="wall"/>
+    <geom class="decor" pos="-3.9 6.15 2.45" size="0.18 0.04 0.15" material="wall"/>
+    <geom class="decor" pos="-4.55 6.1 1.95" size="0.4 0.015 0.25" material="screen_dark"/>
+    <geom class="decor" pos="-3.25 6.1 1.95" size="0.2 0.015 0.25" material="screen_dark"/>
+    <geom class="decor" pos="-4 7.2 0.45" size="0.95 0.28 0.45" material="steel"/>
+    <geom class="decor" pos="-4 7.25 2.1" size="0.6 0.22 0.18" material="steel"/>
+    <geom class="decor" pos="-4.78 6.6 0.9" size="0.2 0.25 0.9" material="shell_white"/>
+    <geom class="decor" type="cylinder" pos="-4.2 7.2 1.03" size="0.16 0.12" material="steel"/>
+    <geom class="decor" type="cylinder" pos="-3.75 7.2 1.03" size="0.16 0.12" material="steel"/>
+    <geom class="decor" pos="-4 6.06 1.5" size="0.6 0.02 0.05" material="noodles"/>
+    <!-- greens restaurant: x -7.075..-5.025, y 3..7.5 -->
+    <geom class="decor" pos="-6.05 5.25 0.004" size="1 2.25 0.004" material="shop_floor"/>
+    <geom class="decor" pos="-6.05 6.85 0.01" size="1 0.63 0.004" material="kitchen_floor"/>
+    <geom name="greens_counter" class="static" pos="-6.05 3.3 0.45" size="0.45 0.3 0.45" material="greens"/>
+    <geom class="decor" pos="-6.05 3.3 0.92" size="0.47 0.32 0.02" material="stone"/>
+    <geom class="decor" pos="-6.787 3 1.1" size="0.287 0.025 1.1" material="glass"/>
+    <geom class="decor" pos="-6.05 3 1.85" size="0.45 0.025 0.35" material="glass"/>
+    <geom class="decor" pos="-5.55 3 1.1" size="0.05 0.025 1.1" material="glass"/>
+    <geom class="decor" pos="-5.49 3 1.1" size="0.02 0.04 1.1" material="trim"/>
+    <geom class="decor" pos="-5.07 3 1.1" size="0.02 0.04 1.1" material="trim"/>
+    <geom class="decor" pos="-5.28 3 2.15" size="0.23 0.04 0.05" material="trim"/>
+    <geom class="decor" pos="-5.1 3.22 1.05" size="0.015 0.2 1" material="glass"/>
+    <geom class="decor" pos="-5.28 2.8 0.006" size="0.22 0.15 0.004" material="gate"/>
+    <geom class="decor" pos="-6.05 3 2.5" size="1.03 0.1 0.3" material="greens"/>
+    <geom class="decor" pos="-6.05 2.75 2.17" size="1.03 0.27 0.025" material="greens"/>
+    <geom class="decor" pos="-6.05 2.49 2.1" size="1.03 0.015 0.07" material="greens"/>
+    <geom class="decor" pos="-6.95 4.6 0.22" size="0.1 0.75 0.22" material="greens"/>
+    <geom class="decor" pos="-7.03 4.6 0.55" size="0.03 0.75 0.2" material="greens"/>
+    <geom class="decor" type="cylinder" pos="-6.6 4.2 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-6.6 4.2 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-6.25 4.2 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-6.11 4.2 0.7" size="0.02 0.15 0.22" material="wood"/>
+    <geom class="decor" type="cylinder" pos="-6.6 5 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-6.6 5 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-6.25 5 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-6.11 5 0.7" size="0.02 0.15 0.22" material="wood"/>
+    <geom class="decor" type="cylinder" pos="-5.55 4.55 0.74" size="0.24 0.015" material="desk"/>
+    <geom class="decor" type="cylinder" pos="-5.55 4.55 0.37" size="0.03 0.37" material="steel"/>
+    <geom class="decor" pos="-5.55 4.2 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-5.55 4.06 0.7" size="0.15 0.02 0.22" material="wood"/>
+    <geom class="decor" pos="-5.55 4.9 0.45" size="0.15 0.15 0.025" material="wood"/>
+    <geom class="decor" pos="-5.55 5.04 0.7" size="0.15 0.02 0.22" material="wood"/>
+    <geom class="decor" pos="-6.05 5.75 0.5" size="0.9 0.22 0.5" material="wood"/>
+    <geom class="decor" pos="-6.05 5.75 1.01" size="0.92 0.24 0.015" material="stone"/>
+    <geom class="decor" pos="-6.65 5.7 1.1" size="0.1 0.08 0.08" material="screen_dark"/>
+    <geom class="decor" pos="-6.6 6.15 1.95" size="0.47 0.04 0.65" material="wall"/>
+    <geom class="decor" pos="-5.3 6.15 1.95" size="0.27 0.04 0.65" material="wall"/>
+    <geom class="decor" pos="-5.95 6.15 2.45" size="0.18 0.04 0.15" material="wall"/>
+    <geom class="decor" pos="-6.6 6.1 1.95" size="0.4 0.015 0.25" material="screen_dark"/>
+    <geom class="decor" pos="-5.3 6.1 1.95" size="0.2 0.015 0.25" material="screen_dark"/>
+    <geom class="decor" pos="-6.05 7.2 0.45" size="0.95 0.28 0.45" material="steel"/>
+    <geom class="decor" pos="-6.05 7.25 2.1" size="0.6 0.22 0.18" material="steel"/>
+    <geom class="decor" pos="-6.83 6.6 0.9" size="0.2 0.25 0.9" material="shell_white"/>
+    <geom class="decor" pos="-5.95 5.55 1.22" size="0.65 0.02 0.2" material="glass"/>
+    <geom class="decor" pos="-6.45 5.75 1.03" size="0.12 0.1 0.03" material="leaf"/>
+    <geom class="decor" pos="-6.15 5.75 1.03" size="0.12 0.1 0.03" material="leaf"/>
+    <geom class="decor" pos="-5.85 5.75 1.03" size="0.12 0.1 0.03" material="leaf"/>
+    <geom class="decor" pos="-5.55 5.75 1.03" size="0.12 0.1 0.03" material="leaf"/>
+
+    <!-- Security desk facing the entrance, guard behind it -->
+    <geom class="decor" pos="-1.8 -2 0.55" size="0.9 0.25 0.55" material="gate"/>
+    <geom class="decor" pos="-1.8 -2 1.115" size="0.95 0.3 0.015" material="stone"/>
+    <geom class="decor" pos="-2.3 -1.85 1.24" size="0.18 0.012 0.11" material="screen_dark"/>
+    <geom class="decor" pos="-1.3 -1.85 1.24" size="0.18 0.012 0.11" material="screen_dark"/>
+    <geom class="decor" pos="-1.8 -2.26 0.85" size="0.6 0.012 0.12" material="trim"/>
+    <geom class="decor" pos="-1.8 -1.45 0.45" size="0.2 0.2 0.04" material="screen_dark"/>
+    <geom class="decor" type="cylinder" pos="-1.8 -1.45 0.95" size="0.17 0.45" material="uniform"/>
+    <geom class="decor" type="sphere" pos="-1.8 -1.45 1.55" size="0.12" material="skin"/>
+    <geom class="decor" type="cylinder" pos="-1.8 -1.45 1.67" size="0.13 0.03" material="uniform"/>
+    <!-- Security office, south-west corner: half-glass walls so the camera sees in -->
+    <geom class="static" pos="-5.7 -2.6 0.5" size="1.3 0.05 0.5" material="wall"/>
+    <geom class="decor" pos="-5.7 -2.6 1.6" size="1.3 0.02 0.6" material="glass"/>
+    <geom class="static" pos="-4.4 -4.2 0.5" size="0.05 0.8 0.5" material="wall"/>
+    <geom class="decor" pos="-4.4 -4.2 1.6" size="0.02 0.8 0.6" material="glass"/>
+    <geom class="decor" pos="-5.7 -2.6 2.25" size="1.3 0.06 0.05" material="trim"/>
+    <geom class="decor" pos="-4.4 -3.85 2.25" size="0.06 1.25 0.05" material="trim"/>
+    <geom class="decor" pos="-5.7 -4.85 0.38" size="1.1 0.12 0.38" material="desk"/>
+    <geom class="decor" pos="-6.4 -4.92 1.2" size="0.2 0.02 0.13" material="screen_dark"/>
+    <geom class="decor" pos="-5.95 -4.92 1.2" size="0.2 0.02 0.13" material="screen_dark"/>
+    <geom class="decor" pos="-5.5 -4.92 1.2" size="0.2 0.02 0.13" material="screen_dark"/>
+    <geom class="decor" pos="-5.05 -4.92 1.2" size="0.2 0.02 0.13" material="screen_dark"/>
+    <geom class="decor" pos="-6.4 -4.92 1.5" size="0.2 0.02 0.13" material="screen_dark"/>
+    <geom class="decor" pos="-5.95 -4.92 1.5" size="0.2 0.02 0.13" material="screen_dark"/>
+    <geom class="decor" pos="-5.5 -4.92 1.5" size="0.2 0.02 0.13" material="screen_dark"/>
+    <geom class="decor" pos="-5.05 -4.92 1.5" size="0.2 0.02 0.13" material="screen_dark"/>
+    <geom class="decor" pos="-5.7 -4.3 0.45" size="0.2 0.2 0.04" material="screen_dark"/>
+    <geom class="decor" pos="-6.8 -3.4 0.9" size="0.15 0.5 0.9" material="steel"/>
+    <geom class="decor" pos="-5.7 -2.54 2" size="0.7 0.02 0.12" material="gate"/>
+
+    <!-- ===== Glass panoramic lift: shaft x 3.75..5.25, y -0.75..0.75, open on the west (-x) side ===== -->
+    <geom class="decor" pos="4.5 0.8 3.8" size="0.8 0.03 3.8" material="glass"/>
+    <geom class="decor" pos="4.5 -0.8 3.8" size="0.8 0.03 3.8" material="glass"/>
+    <geom class="decor" pos="5.3 0 3.8" size="0.03 0.8 3.8" material="glass"/>
+    <geom class="decor" pos="4.5 0 7.62" size="0.83 0.83 0.03" material="steel"/>
+    <geom class="decor" type="cylinder" pos="3.77 0.77 3.8" size="0.035 3.8" material="steel"/>
+    <geom class="decor" type="cylinder" pos="3.77 -0.77 3.8" size="0.035 3.8" material="steel"/>
+    <geom class="decor" type="cylinder" pos="5.27 0.77 3.8" size="0.035 3.8" material="steel"/>
+    <geom class="decor" type="cylinder" pos="5.27 -0.77 3.8" size="0.035 3.8" material="steel"/>
 
     <body name="lift_car" pos="4.5 0 0" gravcomp="1">
-      <joint name="lift" type="slide" axis="0 0 1" range="0 3.2" damping="2000"/>
+      <joint name="lift" type="slide" axis="0 0 1" range="0 6.4" damping="2000"/>
       <inertial pos="0 0 0" mass="300" diaginertia="100 100 100"/>
       <geom name="car_floor" type="box" pos="0 0 -0.03" size="0.74 0.74 0.03" material="lift_car" contype="2" conaffinity="2"/>
       <geom type="box" pos="0 0.72 0.5" size="0.74 0.02 0.5" material="glass" contype="2" conaffinity="2"/>
@@ -108,19 +328,257 @@
       <geom type="box" pos="0.72 0 1.01" size="0.03 0.74 0.015" material="steel" contype="0" conaffinity="0"/>
     </body>
 
-    <!-- ===== Level 23 (slab top at z = 3.2), x 1..7, with the shaft hole ===== -->
-    <geom name="l23_west" class="static" pos="2.375 0 3.15" size="1.375 5 0.05" material="carpet"/>
-    <geom class="static" pos="6.125 0 3.15" size="0.875 5 0.05" material="carpet"/>
-    <geom class="static" pos="4.5 2.875 3.15" size="0.75 2.125 0.05" material="carpet"/>
-    <geom class="static" pos="4.5 -2.875 3.15" size="0.75 2.125 0.05" material="carpet"/>
-    <geom class="static" pos="4 5 3.75" size="3 0.05 0.55" material="wall"/>
-    <geom class="static" pos="7 0 3.75" size="0.05 5 0.55" material="wall"/>
-    <geom class="decor" pos="1 0 3.6" size="0.02 5 0.4" material="glass"/>
-    <!-- Pantry: table where the customer collects, fridge, sign -->
-    <!-- Table east of where the robot parks (2.4, -2.75), so the overview camera (south-west) sees the robot. -->
-    <geom name="pantry_table" class="static" pos="3.35 -2.75 3.6" size="0.35 0.7 0.4" material="wood"/>
-    <geom class="decor" pos="6.5 -4.5 4.0" size="0.3 0.3 0.8" material="pantry"/> <!-- fridge, east wall: never between the camera and the robot -->
-    <site name="pantry_drop" pos="3.35 -2.75 4.05" size="0.02" group="4"/>
+    <!-- ===== Level 20 (slab top z = 3.2): lift lobby in front, Orbit Labs behind its security gate ===== -->
+    <geom class="static" pos="2.375 0 3.15" size="1.375 5 0.05" material="slab"/>
+    <geom class="static" pos="6.125 0 3.15" size="0.875 5 0.05" material="slab"/>
+    <geom class="static" pos="4.5 2.875 3.15" size="0.75 2.125 0.05" material="slab"/>
+    <geom class="static" pos="4.5 -2.875 3.15" size="0.75 2.125 0.05" material="slab"/>
+    <geom class="decor" pos="4 3.3 3.203" size="3 1.7 0.003" material="carpet"/>
+    <geom class="static" pos="4 5 4.7" size="3 0.05 1.5" material="wall"/>
+    <geom class="static" pos="7 0 4.7" size="0.05 5 1.5" material="wall"/>
+    <geom class="decor" pos="1 0 3.65" size="0.02 5 0.45" material="glass"/>
+    <!-- Office front: glass wall on y=1.6 with a two-lane speed gate at x 2.4..3.4 -->
+    <geom class="static" pos="1.7 1.6 4.4" size="0.7 0.03 1.2" material="glass"/>
+    <geom class="static" pos="5.2 1.6 4.4" size="1.8 0.03 1.2" material="glass"/>
+    <geom class="decor" pos="1.7 1.6 4.25" size="0.7 0.035 0.12" material="l20"/>
+    <geom class="decor" pos="5.2 1.6 4.25" size="1.8 0.035 0.12" material="l20"/>
+    <geom class="decor" pos="2.9 1.6 5.45" size="0.55 0.06 0.15" material="l20"/>
+    <geom class="static" pos="2.42 1.6 3.7" size="0.05 0.4 0.5" material="l20"/>
+    <geom class="decor" pos="2.42 1.6 4.215" size="0.055 0.405 0.015" material="steel"/>
+    <geom class="decor" pos="2.42 1.35 4.235" size="0.04 0.08 0.008" material="screen_dark"/>
+    <geom class="static" pos="2.9 1.6 3.7" size="0.05 0.4 0.5" material="l20"/>
+    <geom class="decor" pos="2.9 1.6 4.215" size="0.055 0.405 0.015" material="steel"/>
+    <geom class="decor" pos="2.9 1.35 4.235" size="0.04 0.08 0.008" material="screen_dark"/>
+    <geom class="static" pos="3.38 1.6 3.7" size="0.05 0.4 0.5" material="l20"/>
+    <geom class="decor" pos="3.38 1.6 4.215" size="0.055 0.405 0.015" material="steel"/>
+    <geom class="decor" pos="3.38 1.35 4.235" size="0.04 0.08 0.008" material="screen_dark"/>
+    <geom class="decor" pos="2.55 1.6 3.82" size="0.08 0.01 0.25" material="gate_flap"/>
+    <geom class="decor" pos="2.77 1.6 3.82" size="0.08 0.01 0.25" material="gate_flap"/>
+    <geom class="decor" pos="3.03 1.6 3.82" size="0.08 0.01 0.25" material="gate_flap"/>
+    <geom class="decor" pos="3.25 1.6 3.82" size="0.08 0.01 0.25" material="gate_flap"/>
+    <!-- Painted robot bay outside the gate -->
+    <geom class="decor" pos="1.85 1.15 3.203" size="0.32 0.3 0.003" material="bay"/>
+    <geom class="decor" pos="1.85 1.15 3.204" size="0.27 0.25 0.003" material="slab_paint"/>
+    <!-- Desks behind the gate, meeting room at the back right -->
+    <geom class="decor" pos="2 2.6 3.94" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="2 2.6 3.57" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="1.7 2.48 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="1.7 2.02 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="1.7 1.86 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="2.3 2.48 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="2.3 2.02 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="2.3 1.86 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="1.7 2.72 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="1.7 3.18 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="1.7 3.34 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="2.3 2.72 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="2.3 3.18 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="2.3 3.34 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="2 4 3.94" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="2 4 3.57" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="1.7 3.88 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="1.7 3.42 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="1.7 3.26 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="2.3 3.88 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="2.3 3.42 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="2.3 3.26 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="1.7 4.12 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="1.7 4.58 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="1.7 4.74 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="2.3 4.12 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="2.3 4.58 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="2.3 4.74 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="3.6 2.6 3.94" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="3.6 2.6 3.57" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="3.3 2.48 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.3 2.02 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="3.3 1.86 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="3.9 2.48 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.9 2.02 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="3.9 1.86 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="3.3 2.72 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.3 3.18 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="3.3 3.34 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="3.9 2.72 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.9 3.18 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="3.9 3.34 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="3.6 4 3.94" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="3.6 4 3.57" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="3.3 3.88 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.3 3.42 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="3.3 3.26 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="3.9 3.88 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.9 3.42 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="3.9 3.26 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="3.3 4.12 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.3 4.58 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="3.3 4.74 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="3.9 4.12 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.9 4.58 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="3.9 4.74 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="5.2 2.6 3.94" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="5.2 2.6 3.57" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="4.9 2.48 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="4.9 2.02 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="4.9 1.86 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="5.5 2.48 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="5.5 2.02 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="5.5 1.86 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="4.9 2.72 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="4.9 3.18 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="4.9 3.34 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="5.5 2.72 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="5.5 3.18 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="5.5 3.34 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="5.2 4 3.94" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="5.2 4 3.57" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="4.9 3.88 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="4.9 3.42 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="4.9 3.26 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="5.5 3.88 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="5.5 3.42 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="5.5 3.26 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="4.9 4.12 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="4.9 4.58 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="4.9 4.74 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="5.5 4.12 4.13" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="5.5 4.58 3.65" size="0.18 0.18 0.04" material="l20"/>
+    <geom class="decor" pos="5.5 4.74 3.92" size="0.18 0.03 0.24" material="l20"/>
+    <geom class="decor" pos="6.35 3.4 4.3" size="0.02 1.55 1.1" material="glass"/>
+    <geom class="decor" pos="6.7 3.4 3.92" size="0.25 0.8 0.02" material="desk"/>
+    <geom class="decor" pos="6.7 3.4 3.56" size="0.06 0.4 0.36" material="shell_grey"/>
+    <!-- Lift lobby: bench and planters, kept east and south of the robot's path -->
+    <geom class="decor" pos="6.3 -3.2 3.42" size="0.25 0.8 0.22" material="l20"/>
+    <geom class="decor" type="cylinder" pos="1.35 -4.5 3.45" size="0.2 0.25" material="planter"/>
+    <geom class="decor" type="sphere" pos="1.35 -4.5 3.95" size="0.35" material="leaf"/>
+    <geom class="decor" type="cylinder" pos="6.6 0.9 3.45" size="0.2 0.25" material="planter"/>
+    <geom class="decor" type="sphere" pos="6.6 0.9 3.95" size="0.35" material="leaf"/>
+
+    <!-- ===== Level 23 (slab top z = 6.4): lift lobby in front, Halden Capital behind its security gate ===== -->
+    <geom class="static" pos="2.375 0 6.35" size="1.375 5 0.05" material="slab"/>
+    <geom class="static" pos="6.125 0 6.35" size="0.875 5 0.05" material="slab"/>
+    <geom class="static" pos="4.5 2.875 6.35" size="0.75 2.125 0.05" material="slab"/>
+    <geom class="static" pos="4.5 -2.875 6.35" size="0.75 2.125 0.05" material="slab"/>
+    <geom class="decor" pos="4 3.3 6.403" size="3 1.7 0.003" material="carpet"/>
+    <geom class="static" pos="4 5 7.1" size="3 0.05 0.7" material="wall"/>
+    <geom class="static" pos="7 0 7.1" size="0.05 5 0.7" material="wall"/>
+    <geom class="decor" pos="1 0 6.85" size="0.02 5 0.45" material="glass"/>
+    <!-- Office front: glass wall on y=1.6 with a two-lane speed gate at x 2.4..3.4 -->
+    <geom class="static" pos="1.7 1.6 7.6" size="0.7 0.03 1.2" material="glass"/>
+    <geom class="static" pos="5.2 1.6 7.6" size="1.8 0.03 1.2" material="glass"/>
+    <geom class="decor" pos="1.7 1.6 7.45" size="0.7 0.035 0.12" material="l23"/>
+    <geom class="decor" pos="5.2 1.6 7.45" size="1.8 0.035 0.12" material="l23"/>
+    <geom class="decor" pos="2.9 1.6 8.65" size="0.55 0.06 0.15" material="l23"/>
+    <geom class="static" pos="2.42 1.6 6.9" size="0.05 0.4 0.5" material="l23"/>
+    <geom class="decor" pos="2.42 1.6 7.415" size="0.055 0.405 0.015" material="steel"/>
+    <geom class="decor" pos="2.42 1.35 7.435" size="0.04 0.08 0.008" material="screen_dark"/>
+    <geom class="static" pos="2.9 1.6 6.9" size="0.05 0.4 0.5" material="l23"/>
+    <geom class="decor" pos="2.9 1.6 7.415" size="0.055 0.405 0.015" material="steel"/>
+    <geom class="decor" pos="2.9 1.35 7.435" size="0.04 0.08 0.008" material="screen_dark"/>
+    <geom class="static" pos="3.38 1.6 6.9" size="0.05 0.4 0.5" material="l23"/>
+    <geom class="decor" pos="3.38 1.6 7.415" size="0.055 0.405 0.015" material="steel"/>
+    <geom class="decor" pos="3.38 1.35 7.435" size="0.04 0.08 0.008" material="screen_dark"/>
+    <geom class="decor" pos="2.55 1.6 7.02" size="0.08 0.01 0.25" material="gate_flap"/>
+    <geom class="decor" pos="2.77 1.6 7.02" size="0.08 0.01 0.25" material="gate_flap"/>
+    <geom class="decor" pos="3.03 1.6 7.02" size="0.08 0.01 0.25" material="gate_flap"/>
+    <geom class="decor" pos="3.25 1.6 7.02" size="0.08 0.01 0.25" material="gate_flap"/>
+    <!-- Painted robot bay outside the gate -->
+    <geom class="decor" pos="1.85 1.15 6.403" size="0.32 0.3 0.003" material="bay"/>
+    <geom class="decor" pos="1.85 1.15 6.404" size="0.27 0.25 0.003" material="slab_paint"/>
+    <!-- Desks behind the gate, meeting room at the back right -->
+    <geom class="decor" pos="2 2.6 7.14" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="2 2.6 6.77" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="1.7 2.48 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="1.7 2.02 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="1.7 1.86 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="2.3 2.48 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="2.3 2.02 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="2.3 1.86 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="1.7 2.72 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="1.7 3.18 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="1.7 3.34 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="2.3 2.72 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="2.3 3.18 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="2.3 3.34 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="2 4 7.14" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="2 4 6.77" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="1.7 3.88 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="1.7 3.42 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="1.7 3.26 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="2.3 3.88 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="2.3 3.42 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="2.3 3.26 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="1.7 4.12 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="1.7 4.58 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="1.7 4.74 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="2.3 4.12 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="2.3 4.58 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="2.3 4.74 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="3.6 2.6 7.14" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="3.6 2.6 6.77" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="3.3 2.48 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.3 2.02 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="3.3 1.86 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="3.9 2.48 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.9 2.02 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="3.9 1.86 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="3.3 2.72 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.3 3.18 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="3.3 3.34 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="3.9 2.72 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.9 3.18 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="3.9 3.34 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="3.6 4 7.14" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="3.6 4 6.77" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="3.3 3.88 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.3 3.42 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="3.3 3.26 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="3.9 3.88 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.9 3.42 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="3.9 3.26 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="3.3 4.12 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.3 4.58 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="3.3 4.74 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="3.9 4.12 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="3.9 4.58 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="3.9 4.74 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="5.2 2.6 7.14" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="5.2 2.6 6.77" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="4.9 2.48 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="4.9 2.02 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="4.9 1.86 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="5.5 2.48 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="5.5 2.02 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="5.5 1.86 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="4.9 2.72 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="4.9 3.18 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="4.9 3.34 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="5.5 2.72 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="5.5 3.18 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="5.5 3.34 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="5.2 4 7.14" size="0.6 0.38 0.015" material="desk"/>
+    <geom class="decor" pos="5.2 4 6.77" size="0.58 0.02 0.36" material="shell_grey"/>
+    <geom class="decor" pos="4.9 3.88 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="4.9 3.42 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="4.9 3.26 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="5.5 3.88 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="5.5 3.42 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="5.5 3.26 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="4.9 4.12 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="4.9 4.58 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="4.9 4.74 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="5.5 4.12 7.33" size="0.2 0.012 0.12" material="screen_dark"/>
+    <geom class="decor" pos="5.5 4.58 6.85" size="0.18 0.18 0.04" material="l23"/>
+    <geom class="decor" pos="5.5 4.74 7.12" size="0.18 0.03 0.24" material="l23"/>
+    <geom class="decor" pos="6.35 3.4 7.5" size="0.02 1.55 1.1" material="glass"/>
+    <geom class="decor" pos="6.7 3.4 7.12" size="0.25 0.8 0.02" material="desk"/>
+    <geom class="decor" pos="6.7 3.4 6.76" size="0.06 0.4 0.36" material="shell_grey"/>
+    <!-- Lift lobby: bench and planters, kept east and south of the robot's path -->
+    <geom class="decor" pos="6.3 -3.2 6.62" size="0.25 0.8 0.22" material="l23"/>
+    <geom class="decor" type="cylinder" pos="1.35 -4.5 6.65" size="0.2 0.25" material="planter"/>
+    <geom class="decor" type="sphere" pos="1.35 -4.5 7.15" size="0.35" material="leaf"/>
+    <geom class="decor" type="cylinder" pos="6.6 0.9 6.65" size="0.2 0.25" material="planter"/>
+    <geom class="decor" type="sphere" pos="6.6 0.9 7.15" size="0.35" material="leaf"/>
 
     <!-- ===== Bags: free bodies, parked on their counters until loaded ===== -->
     <body name="bag_A" pos="-2.25 3.3 0.95">
@@ -137,7 +595,7 @@
 
   <actuator>
     <!-- Stiff enough that a 15 kg robot sags the car < 1 mm (kv ≈ critical damping for 300 kg). -->
-    <position name="lift" joint="lift" kp="300000" kv="19000" ctrlrange="0 3.2"/>
+    <position name="lift" joint="lift" kp="300000" kv="19000" ctrlrange="0 6.4"/>
   </actuator>
 
   <sensor>

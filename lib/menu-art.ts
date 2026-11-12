@@ -10,6 +10,7 @@ const ITEM: Record<string, { photo: string; unit: string }> = {
   'fruit-cup': { photo: '1519996529931-28324d5a630e', unit: '1 cup' },
   croissant: { photo: '1721277000438-488066df7ac8', unit: '1 piece' },
   'pain-choc': { photo: '1623334044303-241021148842', unit: '1 piece' },
+  macarons: { photo: '1558024920-b41e1887dc32', unit: '3 pieces' },
   'iced-latte': { photo: '1461023058943-07fcbe16d735', unit: '1 cup' },
   americano: { photo: '1514432324607-a09d9b4aefdd', unit: '1 cup' },
 };
@@ -22,7 +23,7 @@ const SHOP: Record<string, { photo: string; counter: string; tagline: string; is
 };
 
 // Display order: the design's "popular" order, one dish per shop at a time.
-const POPULAR = ['chicken-noodle', 'caesar', 'croissant', 'iced-latte', 'dumplings', 'fruit-cup', 'pain-choc', 'americano'];
+const POPULAR = ['chicken-noodle', 'caesar', 'croissant', 'iced-latte', 'dumplings', 'fruit-cup', 'pain-choc', 'macarons', 'americano'];
 const rank = (list: string[], id: string) => (list.includes(id) ? list.indexOf(id) : list.length);
 export const byPopular = <T extends { id: string }>(xs: T[]) => [...xs].sort((a, b) => rank(POPULAR, a.id) - rank(POPULAR, b.id));
 export const byShopOrder = <T extends { id: string }>(xs: T[]) => [...xs].sort((a, b) => rank(Object.keys(SHOP), a.id) - rank(Object.keys(SHOP), b.id));

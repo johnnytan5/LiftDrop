@@ -4,7 +4,7 @@
  * (copied to public/ by scripts/sync-sim-assets.mjs) and the Tower controller from tower.ts.
  * Adapted from Concierge's dashboard/lib/sim/sim.worker.ts.
  *
- * in : { type: 'deliver', stops, autoLoad?, doorTimeout?, awaitVerdict? }
+ * in : { type: 'deliver', stops, autoLoad?, doorTimeout?, awaitVerdict?, floor?, codeWaitMs? }
  *      { type: 'take', comp, fraction? }   customer lifts a bag out (fraction < 1 = fault)
  *      { type: 'raise', name }             'done', 'loaded:A', or the backend's verdict: 'settled' | 'reopen'
  *      { type: 'speed', x }                sim-time multiplier for the demo
@@ -52,6 +52,8 @@ async function init() {
     geomType: Int32Array.from(model.geom_type),
     geomSize: Float64Array.from(model.geom_size),
     geomGroup: Int32Array.from(model.geom_group),
+    // The bags' geoms, so the view can draw the real dishes on them instead of a box.
+    bagGeom: Object.fromEntries((['A', 'B'] as const).map((c) => [c, Array.from(model.geom_bodyid as Int32Array).indexOf(mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY.value, `bag_${c}`))])),
   });
 
   let lastWall = performance.now(), lastFrame = 0;
@@ -74,7 +76,7 @@ self.onmessage = (e: MessageEvent) => {
   if (msg.type === 'deliver') {
     if (busy) return post({ type: 'error', message: 'robot is already on a delivery' });
     busy = true;
-    tower.deliver(msg.stops, { autoLoad: msg.autoLoad, doorTimeout: msg.doorTimeout, awaitVerdict: msg.awaitVerdict })
+    tower.deliver(msg.stops, { autoLoad: msg.autoLoad, doorTimeout: msg.doorTimeout, awaitVerdict: msg.awaitVerdict, floor: msg.floor, codeWaitMs: msg.codeWaitMs })
       .then((result) => post({ type: 'done', result }))
       .catch((err) => post({ type: 'error', message: String(err?.message ?? err) }))
       .finally(() => { busy = false; });

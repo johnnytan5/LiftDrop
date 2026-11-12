@@ -1,11 +1,10 @@
 'use client';
 
-// Shop counter tablet (Coral Plate design): bags to put in the robot, a "Loaded" button, what
-// the shop earned, and every recent order with its outcome. A bag that came back says why, from
-// the robot's scale and compartment camera. "Loaded" only matters when the robot page has
-// "Shops load instantly" off.
+// Shop counter tablet (Coral Plate design): bags to pack for the robot, what the shop earned,
+// and every recent order with its outcome. A bag that came back says why, from the robot's scale
+// and compartment camera. Staff confirm loading on the robot's own screen, not here.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Compartment, Decision, Item, LedgerRow, Order, OrderItem, Shop } from '../../lib/db.ts';
 import { byShopOrder, itemPhoto, shopArt, shopPhoto } from '../../lib/menu-art.ts';
 
@@ -24,8 +23,13 @@ function outcome(s: State, c: Compartment, o: Order): Outcome {
   const rows = s.ledger.filter((l) => l.order_id === o.id && l.shop_id === c.shop_id);
   const net = rows.find((l) => l.kind === 'payout_pending')?.amount_cents;
   const fee = rows.find((l) => l.kind === 'fee')?.amount_cents;
-  if (net !== undefined) return { tone: 'sold', label: rows.some((l) => l.kind === 'paid_out') ? 'Sold · paid to you' : 'Sold · payout on its way', net, fee, paid: rows.some((l) => l.kind === 'paid_out') };
-  if (o.status === 'failed') return { tone: 'bad', label: 'Order failed', detail: 'The customer wasn’t charged.' };
+  const paid = rows.some((l) => l.kind === 'paid_out');
+  const applied = s.decisions.filter((d) => d.order_id === o.id).at(-1)?.applied as { charge_compartments?: string[]; kept?: Record<string, number> } | undefined;
+  if (net !== undefined && applied?.kept?.[c.id] && !applied.charge_compartments?.includes(c.id)) {
+    return { tone: 'sold', label: paid ? 'Final sale · paid to you' : 'Final sale · payout on its way', detail: 'Not collected, charged as final sale.', net, fee, paid };
+  }
+  if (net !== undefined) return { tone: 'sold', label: paid ? 'Sold · paid to you' : 'Sold · payout on its way', net, fee, paid };
+  if (o.status === 'failed') return { tone: 'back', label: 'Uncollected · refunded', detail: 'The customer wasn’t charged for this. The robot brings it back to your counter.' };
   if (SOLD.includes(o.status) || o.status === 'voided' || o.status === 'returning') {
     const last = s.decisions.filter((d) => d.order_id === o.id).at(-1);
     const f = (last?.facts as Fact[] | undefined)?.find((x) => x.compartment === c.id);
@@ -43,7 +47,15 @@ export default function Vendor() {
   const [shop, setShop] = useState('bakery');
   const [err, setErr] = useState('');
 
-  const refresh = useCallback(() => fetch('/api/state', { cache: 'no-store' }).then((r) => r.json()).then(setS).catch(() => {}), []);
+  // Switch flips the user made that the server hasn't confirmed yet, and when the last one saved:
+  // a poll that left before that save carries the old value, so it's dropped instead of flipping back.
+  const [pending, setPending] = useState<Record<string, boolean>>({});
+  const savedAt = useRef(0);
+  const refresh = useCallback(() => {
+    const sent = Date.now();
+    return fetch('/api/state', { cache: 'no-store' }).then((r) => r.json())
+      .then((next: State) => { if (sent >= savedAt.current) setS(next); }).catch(() => {});
+  }, []);
   useEffect(() => {
     const q = new URLSearchParams(location.search).get('shop');
     if (q) setShop(q);
@@ -67,15 +79,20 @@ export default function Vendor() {
   const rows = s.ledger.filter((l) => l.shop_id === me.id);
   const total = (k: string) => rows.filter((l) => l.kind === k).reduce((a, l) => a + l.amount_cents, 0);
   const recent = [...mine].sort((a, b) => Date.parse(orderOf(b).created_at) - Date.parse(orderOf(a).created_at)).slice(0, 12);
+  const menu = s.items.filter((i) => i.shop_id === me.id);
+  const setFinal = (id: string, final_sale: boolean) => {
+    setPending((p) => ({ ...p, [id]: final_sale }));
+    fetch(`/api/items/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ final_sale }) })
+      .then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); setErr(''); })
+      .catch((e) => setErr(e.message))
+      .finally(async () => {
+        savedAt.current = Date.now();
+        await refresh();
+        setPending(({ [id]: _, ...rest }) => rest);
+      });
+  };
   const sold = recent.filter((c) => outcome(s, c, orderOf(c)).tone === 'sold').length;
   const back = recent.filter((c) => outcome(s, c, orderOf(c)).tone === 'back').length;
-
-  const loaded = async (c: Compartment) => {
-    setErr('');
-    const res = await fetch(`/api/orders/${c.order_id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'loaded', compartment: c.id }) });
-    if (!res.ok) setErr((await res.json()).error);
-    refresh();
-  };
 
   return (
     <main className="cp-app vd">
@@ -88,7 +105,7 @@ export default function Vendor() {
         </div>
         <nav className="vd-tabs" aria-label="Shop">
           {shops.map((x) => (
-            <button key={x.id} aria-pressed={x.id === me.id} onClick={() => { setShop(x.id); history.replaceState(null, '', `?shop=${x.id}`); }}>
+            <button key={x.id} aria-pressed={x.id === me.id} onClick={() => { setShop(x.id); const u = new URL(location.href); u.searchParams.set('shop', x.id); history.replaceState(null, '', u); /* keeps /demo's ?view= */ }}>
               <img src={shopPhoto(x.id, 80)} alt="" />{x.name}
             </button>
           ))}
@@ -107,9 +124,25 @@ export default function Vendor() {
               <small>Order {c.order_id} · {$(c.value_cents)} · {c === next ? 'robot coming for this bag' : 'waiting for a robot'}</small>
             </div>
             {c.vendor_loaded_at ? <span className="vd-closing">Robot is closing compartment {c.id}</span>
-              : <button className="cp-primary vd-loadbtn" onClick={() => loaded(c)}>Loaded into {c.id}</button>}
+              : <span className="vd-hint">{c === next ? `Put it in slot ${c.id}, then tap Loaded on the robot’s screen` : 'Pack it; the robot will ask for it'}</span>}
           </div>
         ))}
+      </section>
+
+      <section className="vd-section">
+        <div className="vd-h2"><h2>Your menu</h2><span className="cp-soft vd-sub">Final sale: charged even if the customer doesn’t collect it</span></div>
+        <ul className="vd-menu">
+          {menu.map((i) => (
+            <li key={i.id}>
+              <img src={itemPhoto(i.id, 120)} alt="" />
+              <span className="vd-menu-main"><b>{i.name}</b><small>{$(i.price_cents)}{(pending[i.id] ?? i.final_sale) ? ' · no refund if not collected' : ' · refunded if not collected'}</small></span>
+              <label className="vd-switch">
+                <input type="checkbox" role="switch" checked={pending[i.id] ?? !!i.final_sale} onChange={(e) => setFinal(i.id, e.target.checked)} />
+                <span>Final sale</span>
+              </label>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="vd-section">
@@ -137,7 +170,7 @@ export default function Vendor() {
                   </div>
                   <span className={`vd-chip ${out.tone}`}>{out.label}</span>
                   <span className="vd-money">
-                    {out.net !== undefined ? <><b>{$(out.net)}</b><small>{$(c.value_cents)} − {$(out.fee ?? 0)} fee</small></>
+                    {out.net !== undefined ? <><b>{$(out.net)}</b><small>{$(out.net + (out.fee ?? 0))} − {$(out.fee ?? 0)} fee</small></>
                       : out.tone === 'back' || out.tone === 'bad' ? <><b className="vd-zero">$0.00</b><small>{$(c.value_cents)} not charged</small></>
                       : <><b className="cp-soft">{$(c.value_cents)}</b><small>if collected</small></>}
                   </span>
@@ -146,7 +179,7 @@ export default function Vendor() {
             })}
           </ul>
         )}
-        <p className="vd-foot">Customers pay only for what they take out of the robot. Its scale and compartment camera check every bag; anything left comes back to your counter and isn’t charged.</p>
+        <p className="vd-foot">Customers pay only for what they take out of the robot. Its scale and compartment camera check every bag; anything left comes back to your counter and isn’t charged, unless you marked it final sale above.</p>
       </section>
     </main>
   );

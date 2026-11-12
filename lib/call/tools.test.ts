@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runTool, type Cart, type CallCtx } from './tools.ts';
 
-const shops = ['bakery', 'cafe', 'noodles'].map((id) => ({ id, name: id, fee_bps: 1000, payout_email: null }));
+const shops = ['bakery', 'cafe', 'noodles'].map((id) => ({ id, name: id, fee_bps: 500, payout_email: null }));
 const items = [
   { id: 'croissant', shop_id: 'bakery', name: 'Butter croissant', price_cents: 450, grams: 80, stock: 9 },
   { id: 'iced-latte', shop_id: 'cafe', name: 'Iced latte', price_cents: 900, grams: 450, stock: 9 },
@@ -12,8 +12,10 @@ const items = [
 function ctx() {
   let cart: Cart = {};
   let checkedOut = false;
-  const c: CallCtx = { items, shops, getCart: () => cart, setCart: (x) => { cart = x; }, checkout: () => { checkedOut = true; }, status: () => null };
-  return { c, cart: () => cart, checkedOut: () => checkedOut };
+  let floor: 20 | 23 = 23;
+  const c: CallCtx = { items, shops, getCart: () => cart, setCart: (x) => { cart = x; }, checkout: () => { checkedOut = true; }, status: () => null,
+    caller: () => ({ name: 'Alex', floor }), setFloor: (f) => { floor = f; } };
+  return { c, cart: () => cart, checkedOut: () => checkedOut, floor: () => floor };
 }
 
 test('update_basket sets, clamps and removes; totals come from the menu', () => {
@@ -64,4 +66,24 @@ test('caller says they are done: the line checks out even if Spark only asks "an
   s2.complete = async () => ({ message: { role: 'assistant', content: 'Sure.' }, ms: 1 });
   await s2.onCaller('Can I also get a latte?');
   assert.equal(u.checkedOut(), false);
+});
+
+test('set_floor only takes the two office floors', () => {
+  const t = ctx();
+  assert.ok('error' in runTool('set_floor', { floor: 21 }, t.c));
+  assert.equal(t.floor(), 23);
+  assert.deepEqual(runTool('set_floor', { floor: 20 }, t.c), { floor: 20, office: 'Orbit Labs' });
+  assert.equal(t.floor(), 20);
+});
+
+test('the call prompt knows every dish and reads final sale from the live menu', async () => {
+  const { callPrompt } = await import('./prompt.ts');
+  const { DISHES } = await import('./knowledge.ts');
+  const { PACK } = await import('../vision.ts');
+  assert.deepEqual(Object.keys(DISHES).sort(), Object.keys(PACK).sort(), 'every menu item has a knowledge line');
+  const live = items.map((i) => ({ ...i, final_sale: i.id === 'iced-latte' }));
+  const p = callPrompt(live, shops, {}, { name: 'Alex', floor: 23 });
+  assert.match(p, /Iced latte \[iced-latte\] \$9\.00 FINAL SALE: 16 oz/);
+  assert.match(p, /Butter croissant \[croissant\] \$4\.50: all-butter/);
+  assert.match(p, /Level 20 \(Orbit Labs\)/);
 });

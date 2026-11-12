@@ -114,7 +114,7 @@ export class CallSession {
     const res = await fetch(this.hooks.url ?? '/api/call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: this.messages, cart: this.ctx.getCart() }),
+      body: JSON.stringify({ messages: this.messages, cart: this.ctx.getCart(), caller: this.ctx.caller() }),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? `call ${res.status}`);

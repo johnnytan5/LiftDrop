@@ -12,9 +12,12 @@ import { hush, speak } from '../lib/voice/tts.ts';
 import { CallSession, type CallLog } from '../lib/call/session.ts';
 import { itemPhoto } from '../lib/menu-art.ts';
 import Pay from './Pay.tsx';
-import { $, cartCount, cartLines, cartShops, cartTotal, headlineOf, type Cart, type Config, type Detail, type Menu } from './order-shared.ts';
+import { Logo } from './Brand.tsx';
+import { $, cartCount, cartLines, cartShops, cartTotal, headlineOf, type Cart, type Config, type Detail, type Menu, type OfficeFloor, ACCOUNT, OFFICES } from './order-shared.ts';
 
-const GREETING = 'LiftDrop order line. What can I get you from the lobby?';
+// Signed in, so the line already knows who and where: it says so up front and asks them to confirm.
+const greeting = (name: string, floor: OfficeFloor) =>
+  `Hi ${name.split(' ')[0]}, LiftDrop here. Delivering to Level ${floor}, ${OFFICES[floor]}. What would you like?`;
 type Line = { who: 'caller' | 'agent' | 'system'; text: string };
 
 const svg = (paths: string[], size = 22, width = 1.8) => (
@@ -26,9 +29,9 @@ const HANG_UP = ['M10.7 13.3a16 16 0 0 0 3.4 2.6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1
 const BAG = ['M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z', 'M3 6h18', 'M16 10a4 4 0 0 1-8 0'];
 const CHECK = ['M20 6 9 17l-5-5'];
 
-export default function CallScreen({ menu, cart, setCart, config, detail, onPaid, onClose }: {
-  menu: Menu; cart: Cart; setCart: (c: Cart) => void; config: Config | null; detail: Detail | null;
-  onPaid: (orderId: string) => void; onClose: (next?: 'basket') => void;
+export default function CallScreen({ menu, cart, setCart, config, detail, floor, setFloor, onPaid, onClose }: {
+  menu: Menu; cart: Cart; setCart: (c: Cart) => void; config: Config | null; detail: Detail | null; floor: OfficeFloor; setFloor: (f: OfficeFloor) => void;
+  onPaid: (orderId: string, code: string) => void; onClose: (next?: 'basket') => void;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [partial, setPartial] = useState('');
@@ -45,6 +48,8 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
   const cartRef = useRef(cart);
   cartRef.current = cart;
   const detailRef = useRef(detail);
+  const floorRef = useRef(floor);
+  floorRef.current = floor;
   detailRef.current = detail;
   const mutedRef = useRef(false);
   mutedRef.current = muted;
@@ -67,7 +72,7 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
       stopped = true;
       asr?.stop();
       stream?.getTracks().forEach((t) => t.stop());
-      speechSynthesis?.cancel();
+      hush(); // the streamed voice too, not just the browser's: it stops mid-word
       setLive(false);
       setPartial('');
     };
@@ -78,13 +83,22 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
       getCart: () => cartRef.current,
       setCart: (c) => { cartRef.current = c; setCart(c); },
       checkout: () => setCheckout(true),
+      caller: () => ({ name: ACCOUNT.name, floor: floorRef.current }),
+      setFloor: (f) => { floorRef.current = f; setFloor(f); },
       status: () => {
         const d = detailRef.current;
         return d ? { order: d.order.id, status: d.order.status, now: headlineOf(d, menu.shops), held: $(d.order.total_cents) } : null;
       },
     }, {
       onSay: (t) => (stopped ? Promise.resolve() : speak(t, gate)),
-      onEnd: () => { stop(); add({ who: 'system', text: 'Call ended.' }); setTimeout(() => onClose(), 1200); },
+      // The line hung up (goodbye, or after PayPal approval): show it, then close. When the caller
+      // hung up, the screen is already closing; a second onClose would undo where they went.
+      onEnd: () => {
+        if (stopped) return;
+        stop();
+        add({ who: 'system', text: 'Call ended.' });
+        setTimeout(() => onClose(), 1200);
+      },
       onThinking: setThinking,
       onHush: hush,
       onLog: (e: CallLog) => {
@@ -113,7 +127,7 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
       }
       if (stopped) return;
       setLive(true);
-      s.greet(GREETING);
+      s.greet(greeting(ACCOUNT.name, floorRef.current));
     })();
     return stop;
     // The call lives as long as the screen; menu and setters are stable for its lifetime.
@@ -122,9 +136,9 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
 
   const hangUp = (next?: 'basket') => { hangup.current(); session.current?.end(); onClose(next); };
   const send = () => { const t = text.trim(); if (!t) return; setText(''); void session.current?.onCaller(t); };
-  const paid = (id: string) => {
+  const paid = (id: string, code: string) => {
     setApproved(true);
-    onPaid(id);
+    onPaid(id, code);
     session.current?.finish('Approved. Your robot is on its way. Bye!');
   };
 
@@ -134,7 +148,7 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
   return (
     <div className="cp-call">
       <header className="cp-call-head">
-        <div className="cp-call-k">LiftDrop order line</div>
+        <div className="cp-call-k"><Logo size={16} /> LiftDrop order line · Halden Tower</div>
         <div className="cp-call-t">{live ? `On call · ${mm}` : 'Connecting…'}</div>
       </header>
 
@@ -166,7 +180,7 @@ export default function CallScreen({ menu, cart, setCart, config, detail, onPaid
             {approved ? <>
               <span className="cp-ok">{svg(CHECK, 11, 3)}</span><span className="cp-grow"><b>PayPal</b> · payment held</span><span className="cp-approved">Approved</span>
             </> : checkout ? (
-              <Pay lines={lineItems} config={config} label="Approve in PayPal" className="cp-approve" onStarted={paid} onError={setPayError} />
+              <Pay lines={lineItems} config={config} label="Approve in PayPal" location={`L${floor}-gate`} className="cp-approve" onStarted={paid} onError={setPayError} />
             ) : (
               <span className="cp-soft">{cartShops(menu, cart).length} of 2 shops · say “that’s all” to check out</span>
             )}

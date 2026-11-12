@@ -7,33 +7,37 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { SimEvent, Stop } from '../lib/sim/tower.ts';
-import { photograph } from './compartmentCam.ts';
+import type { Floor, SimEvent, Stop } from '../lib/sim/tower.ts';
+import { dishGroup, photograph } from './compartmentCam.ts';
 
 export type TowerStatus = {
   phase: string; time: number; x: number; y: number; z: number; yaw: number; floor: number; lift: number;
   grams: { A: number; B: number }; doors: { A: number; B: number }; inSlot: { A: boolean; B: boolean };
 };
 export type TowerHandle = {
-  deliver: (stops: Stop[], opts?: { autoLoad?: boolean; doorTimeout?: number; awaitVerdict?: boolean }) => void;
+  deliver: (stops: Stop[], opts?: { autoLoad?: boolean; doorTimeout?: number; awaitVerdict?: boolean; floor?: Floor; codeWaitMs?: number }) => void;
   take: (comp: 'A' | 'B', fraction?: number) => void;
   raise: (name: string) => void;
   speed: (x: number) => void;
   /** The compartment camera's photo now: the dishes are drawn only if the bag is in the compartment. */
   photo: (comp: 'A' | 'B', dishes: string[]) => string;
+  /** Draw these dishes on the bag (the same models the camera photographs); [] shows a plain bag. */
+  dishes: (comp: 'A' | 'B', dishes: string[]) => void;
 };
 
 const LABELS: [string, number, number, number][] = [
-  ['Level G Café', 0.1, 4.7, 2.25],
-  ['Crumb Bakery', -1.95, 4.7, 2.25],
-  ['Noodle House', -4, 4.7, 2.25],
-  ['Green Bowl', -6.05, 4.7, 2.25],
-  ['Lobby · G', 3, -4.2, 1.4],
-  ['Lift', 4.5, 0, 4.9],
-  ['Level 23 · Pantry', 3.35, -2.75, 5.0],
+  ['Level G Café', 0.1, 2.85, 2.55],
+  ['Crumb Bakery', -1.95, 2.85, 2.55],
+  ['Noodle House', -4, 2.85, 2.55],
+  ['Green Bowl', -6.05, 2.85, 2.55],
+  ['Security', -1.8, -2.3, 1.9],
+  ['Halden Tower · Lobby', -1, -4.6, 1.2],
+  ['Lift', 4.5, 0, 8.1],
+  ['L20 · Orbit Labs', 2.9, 1.5, 5.45],
+  ['L23 · Halden Capital', 2.9, 1.5, 8.65],
 ];
 
-function label(text: string) {
+function label(text: string, depthTest: boolean) {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 128;
   const g = c.getContext('2d')!;
@@ -41,32 +45,37 @@ function label(text: string) {
   g.beginPath(); g.roundRect(8, 24, 496, 80, 40); g.fill();
   g.fillStyle = '#fff'; g.font = '600 44px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText(text, 256, 66);
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest }));
   s.scale.set(1.6, 0.4, 1);
   s.renderOrder = 10;
   return s;
 }
 
-export default function TowerView({ onReady, onStatus, onEvent, onDone, onError, style }: {
+export default function TowerView({ onReady, onStatus, onEvent, onDone, onError, onScene, style, maxPixelRatio = 1.5 }: {
   onReady?: (h: TowerHandle) => void;
+  /** Raw three.js access, for the /cover page that frames a still for the slides. */
+  onScene?: (s: { camera: THREE.PerspectiveCamera; controls: OrbitControls; scene: THREE.Scene; renderer: THREE.WebGLRenderer; labels: THREE.Sprite[]; meshes: (THREE.Mesh | null)[] }) => void;
   onStatus?: (s: TowerStatus) => void;
   onEvent?: (e: SimEvent) => void;
   onDone?: (r: { timedOut: boolean; leftovers: string[] }) => void;
   onError?: (message: string) => void;
   style?: React.CSSProperties;
+  /** Cap on render resolution: 1.5 keeps Retina sharp at about half the GPU work (2x is 4x the
+   *  pixels). /cover passes 2 for its 4K stills. */
+  maxPixelRatio?: number;
 }) {
   const mount = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const cb = useRef({ onReady, onStatus, onEvent, onDone, onError });
-  useEffect(() => { cb.current = { onReady, onStatus, onEvent, onDone, onError }; });
+  const cb = useRef({ onReady, onStatus, onEvent, onDone, onError, onScene });
+  useEffect(() => { cb.current = { onReady, onStatus, onEvent, onDone, onError, onScene }; });
 
   useEffect(() => {
     const el = mount.current;
     if (!el) return;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxPixelRatio));
     el.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#1b2633');
@@ -74,7 +83,8 @@ export default function TowerView({ onReady, onStatus, onEvent, onDone, onError,
     const sun = new THREE.DirectionalLight(0xffffff, 1.2);
     sun.position.set(-4, -6, 12);
     scene.add(sun);
-    for (const [text, x, y, z] of LABELS) { const s = label(text); s.position.set(x, y, z); scene.add(s); }
+    // Office-floor signs are depth-tested so they hide behind the slab above; lobby signs always show.
+    const labels = LABELS.map(([text, x, y, z]) => { const s = label(text, z > 3.2); s.position.set(x, y, z); scene.add(s); return s; });
 
     // MuJoCo is z-up.
     const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 200);
@@ -98,6 +108,20 @@ export default function TowerView({ onReady, onStatus, onEvent, onDone, onError,
     ro.observe(el);
 
     const meshes: (THREE.Mesh | null)[] = [];
+    let bagGeom: Record<string, number> = {};
+    const setDishes = (comp: 'A' | 'B', dishes: string[]) => {
+      const bag = meshes[bagGeom[comp]];
+      if (!bag) return;
+      for (const old of [...bag.children]) {
+        bag.remove(old);
+        old.traverse((o) => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); } });
+      }
+      const g = dishGroup(dishes);
+      g.position.z = -0.05; // bag geom is centred; dishes stand on its floor
+      g.scale.setScalar(1.5); // ponytail: oversized so a dish reads at tower zoom; the camera keeps real size
+      bag.add(g);
+      (bag.material as THREE.Material).visible = !g.children.length; // the box only when there's nothing to show
+    };
     let last: TowerStatus | null = null;
     const robot = new THREE.Vector3(1, -2, 0.5);
 
@@ -126,20 +150,25 @@ export default function TowerView({ onReady, onStatus, onEvent, onDone, onError,
           const color = new THREE.Color(msg.rgba[i * 4], msg.rgba[i * 4 + 1], msg.rgba[i * 4 + 2]);
           // Glass: no depth write, or panes hide whatever is behind them depending on draw order.
           const mat = new THREE.MeshLambertMaterial({ color, transparent: a < 1, opacity: a, depthWrite: a >= 1, side: a < 1 ? THREE.DoubleSide : THREE.FrontSide });
+          // The lift car's floor is flush with the lobby plane: push the plane back in depth or they z-fight.
+          if (type === 0) Object.assign(mat, { polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 });
           const mesh = new THREE.Mesh(geo, mat);
           mesh.matrixAutoUpdate = false;
           if (a < 1) mesh.renderOrder = 1;
           scene.add(mesh);
           meshes.push(mesh);
         }
+        bagGeom = msg.bagGeom ?? {};
         ready = true;
         setLoading(false);
+        cb.current.onScene?.({ camera, controls, scene, renderer, labels, meshes });
         cb.current.onReady?.({
           deliver: (stops, opts = {}) => worker.postMessage({ type: 'deliver', stops, ...opts }),
           take: (comp, fraction) => worker.postMessage({ type: 'take', comp, fraction }),
           raise: (name) => worker.postMessage({ type: 'raise', name }),
           speed: (x) => worker.postMessage({ type: 'speed', x }),
           photo: (comp, dishes) => photograph(renderer, last?.inSlot[comp] ? dishes : []),
+          dishes: setDishes,
         });
       } else if (msg.type === 'frame') {
         const { xpos, xmat } = msg;

@@ -6,3 +6,6 @@ next-env.d.ts
 !.env.example
 public/sim/
 public/mujoco/
+
+# demo video project: renders and audio stay local
+video/

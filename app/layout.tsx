@@ -1,6 +1,7 @@
 import { Barlow_Condensed, Figtree, Public_Sans, Young_Serif } from 'next/font/google';
 import './globals.css';
 import './coral.css';
+import Tour from '../components/Tour.tsx';
 
 const signage = Barlow_Condensed({ subsets: ['latin'], weight: ['500', '600', '700'], variable: '--font-signage' });
 const text = Public_Sans({ subsets: ['latin'], variable: '--font-text' });
@@ -14,7 +15,7 @@ export const viewport = { width: 'device-width', initialScale: 1 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${signage.variable} ${text.variable} ${plate.variable} ${ui.variable}`}>
-      <body>{children}</body>
+      <body>{children}<Tour /></body>
     </html>
   );
 }

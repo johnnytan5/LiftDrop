@@ -1,9 +1,11 @@
 // Order state machine and money flow. The only place order status changes.
 
+import { randomInt, timingSafeEqual } from 'node:crypto';
 import * as db from './db.ts';
 import type { Compartment, Order, OrderStatus } from './db.ts';
 import * as paypal from './paypal.ts';
 import { decide, toFacts, type Applied } from './handoff.ts';
+import { CODE_WAIT_S } from './sim/tower.ts';
 
 const NEXT: Record<OrderStatus, OrderStatus[]> = {
   created: ['held', 'failed'],
@@ -17,7 +19,7 @@ const NEXT: Record<OrderStatus, OrderStatus[]> = {
   voided: ['returning'],
   returning: [],
   paid_out: [],
-  failed: [],
+  failed: ['voided'], // only by an operator, after releasing the money (see opsRelease)
 };
 
 async function move(order: Order, to: OrderStatus, patch: Partial<Order> = {}) {
@@ -29,8 +31,7 @@ const COMPARTMENT_IDS = ['A', 'B'];
 const usd = (c: number) => `$${(c / 100).toFixed(2)}`;
 export type CartLine = { item_id: string; qty: number };
 
-export async function createOrder(location: string, cart: CartLine[], paymentMode: db.PaymentMode = 'hold') {
-  if (paymentMode !== 'hold' && paymentMode !== 'charge') throw new Error(`bad payment mode ${paymentMode}`);
+export async function createOrder(location: string, cart: CartLine[]) {
   const items = await db.listItems();
   if (!cart.length) throw new Error('empty cart');
   const lines = cart.map((l) => {
@@ -53,13 +54,42 @@ export async function createOrder(location: string, cart: CartLine[], paymentMod
   });
   const total = comps.reduce((s, c) => s + c.value_cents, 0);
   const orderItems = lines.map((l) => ({
-    order_id: id, item_id: l.item.id, qty: l.qty,
+    order_id: id, item_id: l.item.id, qty: l.qty, final_sale: !!l.item.final_sale,
     compartment_id: comps.find((c) => c.shop_id === l.item.shop_id)!.id,
   }));
-  await db.insertOrder({ id, location, total_cents: total, payment_mode: paymentMode }, comps, orderItems);
-  const pp = await paypal.createOrder(total, `liftdrop-${id}-create`);
-  return db.updateOrder(id, { paypal_order_id: pp.id });
+  await db.insertOrder({ id, location, total_cents: total }, comps, orderItems);
+  const code = String(randomInt(10_000)).padStart(4, '0');
+  await db.insertSecret(id, code);
+  const pp = await paypal.createOrder(total, `liftdrop-${id}-create`, undefined, {
+    orderId: id, items: lines.map((l) => ({ name: l.item.name, qty: l.qty, unit_cents: l.item.price_cents, final_sale: !!l.item.final_sale })),
+  });
+  // The only time the code leaves the server: to the phone that placed the order.
+  return { ...(await db.updateOrder(id, { paypal_order_id: pp.id })), code };
 }
+
+export const MAX_CODE_TRIES = 5;
+
+/** The customer typed their code on the robot's screen. Right code: the compartments may open. */
+export async function unlock(orderId: string, code: string) {
+  const order = await db.getOrder(orderId);
+  atDoor(order);
+  const s = await db.getSecret(orderId);
+  if (!s) throw new Error(`order ${orderId} has no unlock code`);
+  if (s.unlocked_at) return { unlocked: true, tries_left: MAX_CODE_TRIES - s.tries };
+  if (s.tries >= MAX_CODE_TRIES) throw new Error('Too many wrong codes. The robot is locked and will take the order back.');
+  const typed = Buffer.from(String(code).replace(/\D/g, '').padEnd(4, 'x').slice(0, 4)); // always 4 ASCII bytes
+  if (timingSafeEqual(typed, Buffer.from(s.code))) {
+    await db.updateSecret(orderId, { unlocked_at: new Date().toISOString() });
+    await db.insertEvent(orderId, 'unlocked', { tries: s.tries + 1 });
+    return { unlocked: true, tries_left: MAX_CODE_TRIES - s.tries };
+  }
+  // ponytail: read-then-write count; two racing wrong guesses can count once. Fine at 5 tries.
+  await db.updateSecret(orderId, { tries: s.tries + 1 });
+  await db.insertEvent(orderId, 'wrong_code', { tries: s.tries + 1 });
+  return { unlocked: false, tries_left: MAX_CODE_TRIES - s.tries - 1 };
+}
+
+export async function isUnlocked(orderId: string) { return !!(await db.getSecret(orderId))?.unlocked_at; }
 
 /** Buyer approved in PayPal: reserve the funds. */
 export async function authorize(orderId: string) {
@@ -67,12 +97,6 @@ export async function authorize(orderId: string) {
   if (order.status !== 'created') return order; // idempotent for double clicks
   if (!order.paypal_order_id) throw new Error('order has no PayPal order');
   const { authorizationId } = await paypal.authorizeOrder(order.paypal_order_id, `liftdrop-${orderId}-authorize`);
-  if (order.payment_mode === 'charge') {
-    // Charge now: take the full amount up front; whatever isn't collected is refunded at the door.
-    const cap = await paypal.captureAuthorization(authorizationId, order.total_cents, `liftdrop-${orderId}-capture`);
-    await db.insertLedger([{ order_id: orderId, shop_id: null, kind: 'captured', amount_cents: order.total_cents, paypal_ref: cap.id }]);
-    return move(order, 'held', { authorization_id: authorizationId, capture_id: cap.id, captured_cents: order.total_cents, customer_message: 'Paid. Anything you don’t collect is refunded.' });
-  }
   await db.insertLedger([{ order_id: orderId, shop_id: null, kind: 'held', amount_cents: order.total_cents, paypal_ref: authorizationId }]);
   return move(order, 'held', { authorization_id: authorizationId, customer_message: 'Held, not charged.' });
 }
@@ -115,6 +139,8 @@ export async function handleEvent(orderId: string, ev: SensorEvent) {
     }
     case 'door_opened':
       atDoor(order);
+      // The backend, not the robot's screen, decides: no right code, no open door.
+      if (!(await isUnlocked(orderId))) throw new Error('compartments stay locked until the customer enters their code');
       await db.updateCompartment(orderId, has(ev.compartment), { door_opened: true, door_closed: false });
       return order;
     case 'weight':
@@ -164,8 +190,10 @@ export async function customerDone(orderId: string) {
 }
 
 // Backstop for a sim tab closed at the door: settle from what the sensors already reported.
+// It must outlast the robot's own wait for the gate code (CODE_WAIT_S) plus a door round,
+// or it settles an order the robot is still waiting on.
 // ponytail: in-process timer (single backend instance); instrumentation.ts re-arms it on boot.
-export const DOOR_BACKSTOP_MS = 180_000;
+export const DOOR_BACKSTOP_MS = (CODE_WAIT_S + 180) * 1000;
 export function watchDoor(orderId: string, ms = DOOR_BACKSTOP_MS) {
   setTimeout(async () => {
     try {
@@ -186,7 +214,7 @@ async function handoff(order: Order, comps: Compartment[]) {
     const [orderItems, items, past] = await Promise.all([db.getOrderItems(orderId), db.listItems(), db.listDecisions(orderId)]);
     const facts = toFacts(comps, orderItems, items);
     const waits = past.filter((d) => (d.applied as Applied).action === 'wait').length;
-    const { proposed, applied, source } = await decide(facts, waits, order.payment_mode);
+    const { proposed, applied, source } = await decide(facts, waits);
     const log = db.insertDecision({ order_id: orderId, facts, proposed, applied, source, reason: applied.reason });
     const next = applied.action === 'wait'
       ? db.updateOrder(orderId, { customer_message: applied.customer_message })
@@ -199,7 +227,6 @@ async function handoff(order: Order, comps: Compartment[]) {
 
 /** Charge or release, then reply. Shop payouts run after the reply (PayPal takes ~20 s anyway). */
 async function settle(order: Order, d: Applied) {
-  if (order.payment_mode === 'charge') return settleCharged(order, d);
   const id = order.id;
   try {
     if (d.action === 'void') {
@@ -222,28 +249,8 @@ async function settle(order: Order, d: Applied) {
         captured_cents: d.amount_cents, capture_id: cap.id, customer_message: d.customer_message,
       }),
     ]);
-    startPayout(captured, d.charge_compartments);
+    startPayout(captured, d);
     return captured;
-  } catch (e) {
-    await fail(id, e);
-    throw e;
-  }
-}
-
-/** Charge-now orders were paid in full at order time: refund what wasn't collected. */
-async function settleCharged(order: Order, d: Applied) {
-  const id = order.id;
-  const keep = d.action === 'void' ? 0 : d.amount_cents;
-  const refund = order.total_cents - keep;
-  try {
-    const ref = refund > 0 ? await paypal.refundCapture(order.capture_id!, refund, `liftdrop-${id}-refund`) : null;
-    const to = keep === 0 ? 'voided' : refund > 0 ? 'partially_captured' : 'captured';
-    const [, done] = await Promise.all([
-      ref ? db.insertLedger([{ order_id: id, shop_id: null, kind: 'refunded', amount_cents: refund, paypal_ref: ref.id }]) : null,
-      move(order, to, { captured_cents: keep, customer_message: d.customer_message }),
-    ]);
-    if (keep > 0) startPayout(done, d.charge_compartments);
-    return done;
   } catch (e) {
     await fail(id, e);
     throw e;
@@ -260,8 +267,8 @@ const payoutJobs = new Map<string, Promise<void>>();
 /** Resolves once the payout batch for this order has been sent (or failed). For tests and scripts. */
 export const payoutSent = (orderId: string) => payoutJobs.get(orderId) ?? Promise.resolve();
 
-function startPayout(order: Order, charged: string[]) {
-  const job = payShops(order, charged)
+function startPayout(order: Order, d: Pick<Applied, 'charge_compartments' | 'kept'>) {
+  const job = payShops(order, d)
     .then((o) => watchPayout(o.id))
     .catch((e) => { console.error(`payout ${order.id}:`, e); return fail(order.id, e); })
     .finally(() => payoutJobs.delete(order.id));
@@ -278,15 +285,35 @@ export function splitPayouts(comps: { shop_id: string; value_cents: number }[], 
   });
 }
 
-async function payShops(order: Order, charged: string[]) {
-  const [allComps, shops] = await Promise.all([db.getCompartments(order.id), db.listShops()]);
-  const split = splitPayouts(allComps.filter((c) => charged.includes(c.id)), shops);
+/** What a shop reads in its PayPal payout email: the order, what it sold, and the fee. */
+export function payoutNote(orderId: string, location: string, sold: { name: string; qty: number; cents: number; left?: boolean }[], s: { gross: number; fee: number; net: number; feeBps: number }) {
+  const usd = (c: number) => `$${(c / 100).toFixed(2)}`;
+  const floor = /^L(\d+)/.exec(location)?.[1];
+  const lines = sold.map((l) => `${l.qty}× ${l.name} ${usd(l.cents)}${l.left ? ' (final sale, not collected)' : ''}`).join(', ');
+  return `LiftDrop order ${orderId}${floor ? `, delivered to Level ${floor}` : ''}. Sold: ${lines}. `
+    + `Sales ${usd(s.gross)}, LiftDrop fee ${s.feeBps / 100}% -${usd(s.fee)}, paid to you ${usd(s.net)}.`;
+}
+
+async function payShops(order: Order, d: Pick<Applied, 'charge_compartments' | 'kept'>) {
+  const [allComps, shops, lines, menu] = await Promise.all([db.getCompartments(order.id), db.listShops(), db.getOrderItems(order.id), db.listItems()]);
+  // Taken compartments pay in full; uncollected ones pay only their final-sale items.
+  const paid = allComps.map((c) => ({ shop_id: c.shop_id, value_cents: d.charge_compartments.includes(c.id) ? c.value_cents : d.kept?.[c.id] ?? 0 }));
+  const split = splitPayouts(paid.filter((c) => c.value_cents > 0), shops);
   const sandbox = process.env.PAYPAL_MODE === 'sandbox';
   const items = split.map((s) => {
     if (!s.shop.payout_email && sandbox) throw new Error(`shop ${s.shop.id} has no payout email`);
-    return { shop_id: s.shop.id, email: s.shop.payout_email ?? `${s.shop.id}@example.com`, cents: s.net };
+    // The same items the shop is paid for, named in its payout email.
+    const sold = allComps.filter((c) => c.shop_id === s.shop.id).flatMap((c) => {
+      const taken = d.charge_compartments.includes(c.id);
+      return lines.filter((l) => l.compartment_id === c.id && (taken || (d.kept?.[c.id] && l.final_sale))).map((l) => {
+        const item = menu.find((i) => i.id === l.item_id);
+        return { name: item?.name ?? l.item_id, qty: l.qty, cents: (item?.price_cents ?? 0) * l.qty, left: !taken };
+      });
+    });
+    const note = payoutNote(order.id, order.location, sold, { gross: s.gross, fee: s.fee, net: s.net, feeBps: s.shop.fee_bps });
+    return { shop_id: s.shop.id, email: s.shop.payout_email ?? `${s.shop.id}@example.com`, cents: s.net, note };
   });
-  const batch = await paypal.createPayout(`liftdrop-${order.id}-payout`, items);
+  const batch = await paypal.createPayout(`liftdrop-${order.id}-payout`, items, `LiftDrop payout · order ${order.id}`);
   const [, paying] = await Promise.all([
     db.insertLedger(split.flatMap((s) => [
       { order_id: order.id, shop_id: s.shop.id, kind: 'fee' as const, amount_cents: s.fee, paypal_ref: null },
@@ -304,11 +331,16 @@ export async function syncPayout(orderId: string) {
   const p = await paypal.getPayout(order.payout_batch_id);
   if (!p.done) return order;
   const pending = (await db.listLedger(orderId)).filter((r) => r.kind === 'payout_pending');
+  const paidOut = (rows: typeof pending) => db.insertLedger(rows.map((r) => ({ order_id: orderId, shop_id: r.shop_id, kind: 'paid_out' as const, amount_cents: r.amount_cents, paypal_ref: r.paypal_ref })));
   if (!p.ok) {
-    await db.insertEvent(orderId, 'error', { message: `payout ${p.status}`, items: p.items });
+    // Record the shops PayPal did pay; name the ones it didn't, so ops can see who to chase.
+    const landed = new Set(p.items.filter((i) => i.status === 'SUCCESS').map((i) => i.shop_id));
+    await paidOut(pending.filter((r) => r.shop_id && landed.has(r.shop_id)));
+    const bad = p.items.filter((i) => i.status !== 'SUCCESS').map((i) => `${i.shop_id} ${i.status}`);
+    await db.insertEvent(orderId, 'error', { message: bad.length ? `payout to ${bad.join(', ')} (batch ${p.status})` : `payout batch ${p.status}`, items: p.items });
     return move(order, 'failed');
   }
-  await db.insertLedger(pending.map((r) => ({ order_id: orderId, shop_id: r.shop_id, kind: 'paid_out' as const, amount_cents: r.amount_cents, paypal_ref: r.paypal_ref })));
+  await paidOut(pending);
   return move(order, 'paid_out');
 }
 
@@ -347,21 +379,83 @@ export async function expireUnclaimed(now = Date.now(), force = false) {
     if (age < (o.robot_session ? STUCK_MS : UNCLAIMED_MS) || settling.has(o.id)) continue;
     settling.add(o.id);
     try {
-      if (o.payment_mode === 'charge' && o.capture_id) {
-        const ref = await paypal.refundCapture(o.capture_id, o.total_cents, `liftdrop-${o.id}-refund`);
-        await db.insertLedger([{ order_id: o.id, shop_id: null, kind: 'refunded', amount_cents: o.total_cents, paypal_ref: ref.id }]);
-        await move(o, 'voided', { captured_cents: 0, customer_message: `No robot could take your order, so it was cancelled. Refunded ${usd(o.total_cents)}.` });
-      } else {
-        await paypal.voidAuthorization(o.authorization_id!, `liftdrop-${o.id}-void`);
-        await db.insertLedger([{ order_id: o.id, shop_id: null, kind: 'voided', amount_cents: o.total_cents, paypal_ref: o.authorization_id }]);
-        await move(o, 'voided', { customer_message: 'No robot could take your order, so it was cancelled. Nothing was charged.' });
-      }
+      await cancel(o, 'No robot could take your order, so it was cancelled.');
     } catch (e) {
       await fail(o.id, e); // e.g. a mock authorization lost on restart: stop retrying it
     } finally {
       settling.delete(o.id);
     }
   }
+}
+
+/** Give the customer's money back in full and close the order (not yet delivered). */
+async function cancel(o: Order, why: string) {
+  await paypal.voidAuthorization(o.authorization_id!, `liftdrop-${o.id}-void`);
+  await db.insertLedger([{ order_id: o.id, shop_id: null, kind: 'voided', amount_cents: o.total_cents, paypal_ref: o.authorization_id }]);
+  return move(o, 'voided', { customer_message: `${why} Nothing was charged.` });
+}
+
+// ---------- operator actions (/ops) ----------
+// Same money paths as the robot's handoff, started by a person. Each one is logged as an event,
+// and settle decisions as a decision with source 'operator'.
+
+async function asOperator<T>(orderId: string, action: string, note: string, fn: (o: Order) => Promise<T>) {
+  if (settling.has(orderId)) throw new Error(`order ${orderId} is settling right now; try again in a moment`);
+  settling.add(orderId);
+  try {
+    const out = await fn(await db.getOrder(orderId));
+    await db.insertEvent(orderId, 'ops', { action, note });
+    return out;
+  } finally {
+    settling.delete(orderId);
+  }
+}
+
+/** The robot is at the gate and the sensors couldn't settle it: charge exactly these compartments. */
+export function opsSettle(orderId: string, charge: string[], note = '') {
+  return asOperator(orderId, `settle:${charge.join('') || 'none'}`, note, async (o) => {
+    atDoor(o);
+    const comps = await db.getCompartments(orderId);
+    const take = comps.filter((c) => charge.includes(c.id));
+    if (take.length !== charge.length) throw new Error(`order ${orderId} has no compartment ${charge.find((id) => !comps.some((c) => c.id === id))}`);
+    const amount = take.reduce((s, c) => s + c.value_cents, 0);
+    const applied: Applied = take.length
+      ? { action: 'charge', charge_compartments: take.map((c) => c.id), amount_cents: amount, clamped: false,
+          customer_message: `Charged ${usd(amount)} for compartment ${take.map((c) => c.id).join(' and ')}.${amount < o.total_cents ? ` The rest was not charged.` : ''}`,
+          reason: `Operator: charge ${take.map((c) => c.id).join(', ')}${note ? ` (${note})` : ''}` }
+      : { action: 'void', charge_compartments: [], amount_cents: 0, clamped: false,
+          customer_message: 'Not charged.',
+          reason: `Operator: release everything${note ? ` (${note})` : ''}` };
+    await db.insertDecision({ order_id: orderId, facts: null, proposed: applied, applied, source: 'operator', reason: applied.reason });
+    return settle(o, applied);
+  });
+}
+
+/** Stuck before the gate (no robot, or the robot never got there): cancel and give the money back. */
+export function opsCancel(orderId: string, note = '') {
+  return asOperator(orderId, 'cancel', note, async (o) => {
+    if (!['held', 'collecting', 'en_route'].includes(o.status)) throw new Error(`order ${orderId} is ${o.status}; only orders not yet at the gate can be cancelled`);
+    return cancel(o, 'Our operator cancelled your order.');
+  });
+}
+
+/** A failed order whose money never moved: release the hold in full. */
+export function opsRelease(orderId: string, note = '') {
+  return asOperator(orderId, 'release', note, async (o) => {
+    if (o.status !== 'failed') throw new Error(`order ${orderId} is ${o.status}, not failed`);
+    const kinds = new Set((await db.listLedger(orderId)).map((l) => l.kind));
+    if (kinds.has('captured') || kinds.has('voided') || !o.authorization_id) {
+      throw new Error(`money on ${orderId} already moved (or was never held); check it in PayPal, then mark it resolved`);
+    }
+    return cancel(o, 'Something went wrong with your order, so our operator cancelled it.');
+  });
+}
+
+/** Seen and handled outside the app (or nothing to do): take it off the queue. */
+export async function opsResolve(orderId: string, note = '') {
+  await db.getOrder(orderId); // 404s on a bad id
+  await db.insertEvent(orderId, 'ops', { action: 'resolve', note });
+  return { ok: true };
 }
 
 export async function syncPendingPayouts() {

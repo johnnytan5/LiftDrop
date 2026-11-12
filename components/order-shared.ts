@@ -1,13 +1,17 @@
 // Shared by the phone app's screens and the call screen.
 import type { Compartment, Item, LedgerRow, Order, Shop } from '../lib/db.ts';
 
-export type Detail = { order: Order; compartments: Compartment[]; ledger: LedgerRow[]; decision: { action: string; charge_compartments: string[]; at: string } | null; lines: { item_id: string; compartment_id: string; qty: number; name: string }[] };
+export type Detail = { order: Order; compartments: Compartment[]; ledger: LedgerRow[]; decision: { action: string; charge_compartments: string[]; kept?: Record<string, number>; at: string } | null; unlocked?: boolean; code_deadline?: string | null; lines: { item_id: string; compartment_id: string; qty: number; name: string }[] };
 export type Menu = { items: Item[]; shops: Shop[] };
 export type Config = { mode: 'mock' | 'sandbox'; clientId: string | null };
 export type Cart = Record<string, number>;
 
 export const $ = (c: number) => `$${(c / 100).toFixed(2)}`;
 export const DONE = ['captured', 'partially_captured', 'paying_out', 'paid_out'];
+export { OFFICES, type OfficeFloor } from '../lib/call/tools.ts';
+// ponytail: one demo account signed in on this phone; real sign-in when there are real customers.
+export const ACCOUNT = { name: 'Alex Chen' };
+
 export const MAX_SHOPS = 2; // the robot has two compartments, one shop each
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {
@@ -31,8 +35,9 @@ export function headlineOf(d: Detail, shops: Shop[], asked = false, checking = f
     : order.status === 'held' ? 'Robot is heading to the shops'
     : order.status === 'collecting' ? `Picking up at ${waitingAt ? shopName(waitingAt.shop_id) : 'the shops'}`
     : order.status === 'en_route' ? 'On its way up to you'
-    : order.status === 'at_door' ? (asked ? 'One more check' : checking ? 'Checking what you took…' : 'Your robot is at the pantry')
+    : order.status === 'at_door' && !d.unlocked ? 'Your robot is calling you'
+    : order.status === 'at_door' ? (asked ? 'One more check' : checking ? 'Checking what you took…' : 'Your robot is at your gate')
     : DONE.includes(order.status) ? 'Delivered'
     : order.status === 'voided' || order.status === 'returning' ? 'Not delivered, not charged'
-    : order.captured_cents > 0 ? 'Charged, payout delayed' : 'Something went wrong. You haven’t been charged.';
+    : order.captured_cents > 0 ? 'Delivered' : 'Something went wrong. You haven’t been charged.'; // a failed shop payout is for ops, not the customer
 }

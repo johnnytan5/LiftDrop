@@ -7,7 +7,7 @@ const BASE = 'https://api-m.sandbox.paypal.com';
 const mode = () => (process.env.PAYPAL_MODE === 'sandbox' ? 'sandbox' : 'mock');
 export const usd = (cents: number) => (cents / 100).toFixed(2);
 
-export type PayoutItem = { shop_id: string; email: string; cents: number };
+export type PayoutItem = { shop_id: string; email: string; cents: number; note?: string };
 
 export class PayPalError extends Error {
   issue: string;
@@ -65,17 +65,15 @@ export async function get(path: string) {
 // ---------- mock ----------
 
 type MockAuth = { amount: number; captured: number; closed: boolean };
-type MockCapture = { amount: number; refunded: number };
-const m = globalThis as { __pp?: { seq: number; orders: Map<string, number>; auths: Map<string, MockAuth>; captures: Map<string, MockCapture>; replies: Map<string, unknown>; fail: string | null } };
+const m = globalThis as { __pp?: { seq: number; orders: Map<string, number>; auths: Map<string, MockAuth>; replies: Map<string, unknown>; fail: string | null } };
 const mock = () => {
-  const s = (m.__pp ??= { seq: 0, orders: new Map(), auths: new Map(), captures: new Map(), replies: new Map(), fail: null });
-  s.captures ??= new Map(); // a store made by older code survives dev hot reloads
+  const s = (m.__pp ??= { seq: 0, orders: new Map(), auths: new Map(), replies: new Map(), fail: null });
   return s;
 };
 const mid = (p: string) => `${p}${(++mock().seq).toString().padStart(6, '0')}MOCK`;
 
 /** Make the next mock call of this op throw (for fault demos and the self-check). */
-export function setMockFailure(op: 'capture' | 'void' | 'payout' | 'authorize' | 'refund' | null) { mock().fail = op; }
+export function setMockFailure(op: 'capture' | 'void' | 'payout' | 'authorize' | null) { mock().fail = op; }
 export function resetMock() { m.__pp = undefined; }
 
 function once<T>(requestId: string, op: string, fn: () => T): T {
@@ -90,11 +88,24 @@ function once<T>(requestId: string, op: string, fn: () => T): T {
 // ---------- API ----------
 
 /** returnUrl only for redirect checkout (spike script); the JS SDK button doesn't need it. */
-export async function createOrder(cents: number, requestId: string, returnUrl?: string): Promise<{ id: string; approveUrl?: string }> {
+/** Line items show in the PayPal window and on the buyer's PayPal receipt; they must add up to cents. */
+export type OrderDetails = { orderId: string; items: { name: string; qty: number; unit_cents: number; final_sale?: boolean }[] };
+export async function createOrder(cents: number, requestId: string, returnUrl?: string, details?: OrderDetails): Promise<{ id: string; approveUrl?: string }> {
   if (mode() === 'mock') return once(requestId, 'create', () => { const id = mid('ORD'); mock().orders.set(id, cents); return { id }; });
   const j = await call('/v2/checkout/orders', {
     intent: 'AUTHORIZE',
-    purchase_units: [{ amount: { currency_code: 'USD', value: usd(cents) }, description: 'LiftDrop delivery' }],
+    purchase_units: [details ? {
+      description: `LiftDrop order ${details.orderId}`, invoice_id: details.orderId, custom_id: details.orderId,
+      amount: { currency_code: 'USD', value: usd(cents), breakdown: { item_total: { currency_code: 'USD', value: usd(cents) } } },
+      items: details.items.map((i) => ({
+        name: i.name.slice(0, 127), quantity: String(i.qty), unit_amount: { currency_code: 'USD', value: usd(i.unit_cents) },
+        description: i.final_sale ? 'Final sale: charged even if not collected' : 'Charged only if you take it',
+      })),
+    } : { amount: { currency_code: 'USD', value: usd(cents) }, description: 'LiftDrop delivery' }],
+    // Shown in the PayPal window: our name instead of the sandbox's "Test Store", and no shipping
+    // address (the robot delivers inside the building). ponytail: application_context is the older
+    // field, kept because it leaves the order CREATED for the popup button, exactly as before.
+    application_context: { brand_name: 'LiftDrop', shipping_preference: 'NO_SHIPPING' },
     ...(returnUrl ? { payment_source: { paypal: { experience_context: { return_url: returnUrl, cancel_url: returnUrl, user_action: 'CONTINUE' } } } } : {}),
   }, requestId);
   return { id: j.id, approveUrl: j.links?.find((l: { rel: string }) => l.rel === 'approve' || l.rel === 'payer-action')?.href };
@@ -123,25 +134,11 @@ export async function captureAuthorization(authId: string, cents: number, reques
     a.captured += cents;
     a.closed = true;
     const id = mid('CAP');
-    mock().captures.set(id, { amount: cents, refunded: 0 });
     return { id, status: 'COMPLETED' };
   });
   const j = await call(`/v2/payments/authorizations/${authId}/capture`, {
     amount: { currency_code: 'USD', value: usd(cents) }, final_capture: true,
   }, requestId);
-  return { id: j.id, status: j.status };
-}
-
-/** Give back part (or all) of a completed capture: the "charge now" mode's undelivered items. */
-export async function refundCapture(captureId: string, cents: number, requestId: string): Promise<{ id: string; status: string }> {
-  if (mode() === 'mock') return once(requestId, 'refund', () => {
-    const c = mock().captures.get(captureId);
-    if (!c) throw new PayPalError('RESOURCE_NOT_FOUND', `no capture ${captureId}`);
-    if (cents <= 0 || c.refunded + cents > c.amount) throw new PayPalError('REFUND_AMOUNT_EXCEEDED', 'refund exceeds capture');
-    c.refunded += cents;
-    return { id: mid('REF'), status: 'COMPLETED' };
-  });
-  const j = await call(`/v2/payments/captures/${captureId}/refund`, { amount: { currency_code: 'USD', value: usd(cents) } }, requestId);
   return { id: j.id, status: j.status };
 }
 
@@ -171,13 +168,13 @@ export async function getPayout(batchId: string): Promise<PayoutStatus> {
 }
 
 /** One batch per order; sender_batch_id makes retries safe. */
-export async function createPayout(batchId: string, items: PayoutItem[]): Promise<{ batchId: string; status: string }> {
+export async function createPayout(batchId: string, items: PayoutItem[], subject = 'LiftDrop payout'): Promise<{ batchId: string; status: string }> {
   if (mode() === 'mock') return once(batchId, 'payout', () => ({ batchId: mid('PAYOUT'), status: 'SUCCESS' }));
   const j = await call('/v1/payments/payouts', {
-    sender_batch_header: { sender_batch_id: batchId, email_subject: 'LiftDrop payout' },
+    sender_batch_header: { sender_batch_id: batchId, email_subject: subject.slice(0, 255) },
     items: items.map((i) => ({
       recipient_type: 'EMAIL', receiver: i.email, sender_item_id: `${batchId}-${i.shop_id}`,
-      amount: { currency: 'USD', value: usd(i.cents) }, note: 'LiftDrop delivered items, minus fee',
+      amount: { currency: 'USD', value: usd(i.cents) }, note: (i.note ?? 'LiftDrop delivered items, minus fee').slice(0, 4000),
     })),
   }, batchId);
   return { batchId: j.batch_header.payout_batch_id, status: j.batch_header.batch_status };

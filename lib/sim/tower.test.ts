@@ -43,6 +43,7 @@ test('croissant taken, latte left: sensors report it and the latte goes back to 
   let took = false, maxZ = 0;
   const result = await run(t, t.deliver(stops, { doorTimeout: 15 }), () => {
     maxZ = Math.max(maxZ, t.pose().z);
+    if (t.phase === 'calling customer') t.raise('unlock'); // the customer typed the right code
     if (!took && events.filter((e) => e.type === 'door_opened').length === 2) {
       took = true;
       t.take('A');
@@ -56,7 +57,7 @@ test('croissant taken, latte left: sensors report it and the latte goes back to 
   assert.deepEqual(loaded.map((e) => e.compartment), ['B', 'A']); // café first, then bakery
   assert.ok(Math.abs(loaded[0].grams - 450) <= 10, `latte weighed ${loaded[0].grams}`);
   assert.ok(Math.abs(loaded[1].grams - 80) <= 10, `croissant weighed ${loaded[1].grams}`);
-  assert.ok(maxZ > 3.2, `robot never reached L23 (max z ${maxZ})`);
+  assert.ok(maxZ > 6.4, `robot never reached L23 (max z ${maxZ})`);
   assert.ok(brief.includes('arrived'));
   const weights = events.filter((e) => e.type === 'weight') as { compartment: string; grams: number }[];
   // A drops to ~0 while the door is open; then the final reading per compartment at close.
@@ -71,7 +72,7 @@ test('croissant taken, latte left: sensors report it and the latte goes back to 
   assert.ok(Math.hypot(bagB[0] + 0.2, bagB[1] - 3.3) < 0.3, `latte not back on the café counter: ${Array.from(bagB.subarray(0, 3))}`);
 });
 
-test('far west shops: noodles and greens, both bags taken, nothing left over', async () => {
+test('far west shops to level 20: noodles and greens, both bags taken, nothing left over', async () => {
   const { mj, m, d } = await scene();
   const events: SimEvent[] = [];
   const t = new Tower(mj, m, d, (e) => events.push(e));
@@ -79,15 +80,30 @@ test('far west shops: noodles and greens, both bags taken, nothing left over', a
     { comp: 'A', shop: 'noodles', grams: 600, label: 'Noodle House' },
     { comp: 'B', shop: 'greens', grams: 350, label: 'Green Bowl' },
   ];
-  let took = false;
-  const result = await run(t, t.deliver(stops, { doorTimeout: 15 }), () => {
+  let took = false, at = 0;
+  const result = await run(t, t.deliver(stops, { doorTimeout: 15, floor: 20 }), () => {
+    if (events.some((e) => e.type === 'arrived') && !at) at = t.status().floor;
+    if (t.phase === 'calling customer') t.raise('unlock');
     if (!took && events.filter((e) => e.type === 'door_opened').length === 2) { took = true; t.take('A'); t.take('B'); }
   });
   const loaded = events.filter((e) => e.type === 'loaded') as { compartment: string; grams: number }[];
   assert.deepEqual(loaded.map((e) => e.compartment), ['A', 'B']); // noodles first, then greens (east to west)
   assert.ok(Math.abs(loaded[0].grams - 600) <= 10 && Math.abs(loaded[1].grams - 350) <= 10, JSON.stringify(loaded));
-  assert.ok(events.some((e) => e.type === 'arrived'));
+  assert.deepEqual(events.find((e) => e.type === 'arrived'), { type: 'arrived', floor: 20 });
+  assert.equal(at, 20);
   assert.deepEqual(result.leftovers, []);
   const p = t.pose();
   assert.ok(Math.hypot(p.x - 1, p.y + 2) < 0.1 && p.z < 0.2, `robot not back at the dock: ${JSON.stringify(p)}`);
+});
+
+test('nobody enters the code: the compartments never open and both bags go back', async () => {
+  const { mj, m, d } = await scene();
+  const events: SimEvent[] = [];
+  const t = new Tower(mj, m, d, (e) => events.push(e));
+  const stops: Stop[] = [{ comp: 'A', shop: 'cafe', grams: 450, label: 'Level G Café' }];
+  const result = await run(t, t.deliver(stops, { codeTimeout: 5 }), () => {});
+  assert.ok(!events.some((e) => e.type === 'door_opened'), 'a locked compartment opened');
+  assert.equal(events.at(-1)?.type, 'timeout');
+  assert.ok(result.timedOut);
+  assert.deepEqual(result.leftovers, ['A']);
 });
