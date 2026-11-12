@@ -12,6 +12,7 @@ import type { TowerHandle, TowerStatus } from './TowerView.tsx';
 import { CODE_WAIT_S, type Floor, type SimEvent, type Stop } from '../lib/sim/tower.ts';
 import type { Compartment, Item, LedgerRow, Order, OrderItem, Shop } from '../lib/db.ts';
 import RobotScreen, { type ScreenMode } from './RobotScreen.tsx';
+import Nudge, { type NudgeTip } from './Nudge.tsx';
 import type { CameraCheck } from '../lib/vision.ts';
 
 const TowerView = dynamic(() => import('./TowerView.tsx'), { ssr: false });
@@ -212,6 +213,19 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
     : phase === 'idle' ? { kind: 'status', title: 'Ready', text: 'Docked and charging. Waiting for an order.' }
     : { kind: 'status', title: /return|dock|handing back/.test(phase) ? 'Heading back' : !active ? 'Busy' : collecting ? 'Collecting an order' : `Delivering to Level ${dest}`, text: `${phase[0].toUpperCase()}${phase.slice(1)}. Compartments locked.` };
   const loadComp = loadingAt?.comp ?? returningAt?.comp;
+  // What the demo is waiting on a person for; Nudge points at it if nobody acts for a while.
+  const bagOut = comps.some((c) => status && !status.inSlot[c.id as 'A' | 'B']);
+  const tip: NudgeTip | null = screen.kind === 'load' && !screen.done
+    ? { key: `load:${active}:${screen.comp}`, el: '.rs-glass .rs-big', say: `You're the ${screen.shop} staff now: put the bag in compartment ${screen.comp}, then tap “Loaded” on the robot's screen.` }
+    : screen.kind === 'return'
+    ? { key: `return:${active}:${screen.comp}`, el: '.rs-glass .rs-big', say: `The robot brought back what wasn't collected. As the ${screen.shop} staff, take it out of compartment ${screen.comp}, then tap “Taken back”.` }
+    : screen.kind === 'code'
+    ? { key: `code:${active}`, el: '.rs-code', say: 'The robot is at your security gate. Type the 4-digit code shown on the phone into its screen.' }
+    : screen.kind === 'open' && !bagOut
+    ? { key: `take:${active}`, el: '.mimic', say: 'Play the customer: take out the bags you want. A bag you leave goes back to the shop and isn’t charged, unless the shop marked it final sale.' }
+    : screen.kind === 'open'
+    ? { key: `done:${active}`, el: '.rs-glass .rs-big', say: 'Got what you wanted? Tap “I’ve taken my order”: the doors close and PayPal settles.' }
+    : null;
   // Inside camera, live, while staff load this compartment by hand (rendered here, not sent to SAM).
   // After the robot moves on it keeps filming that compartment a moment, so staff see the bag inside.
   const lastLoad = useRef<string | null>(null);
@@ -262,6 +276,7 @@ export default function RobotStage({ onRobot }: { onRobot?: (s: TowerStatus) => 
         onError={(m) => note(m, false)}
       />
 
+      <Nudge tip={tip} />
       <div className="stage-top">
         <div className="lift-panel" aria-live="polite">
           <span className="led small-led"><span className="led-arrow">{status?.phase.includes('↑') ? '▲' : ''}</span><span className="led-num">{floor === 0 ? 'G' : floor}</span></span>

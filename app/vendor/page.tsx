@@ -29,7 +29,7 @@ function outcome(s: State, c: Compartment, o: Order): Outcome {
     return { tone: 'sold', label: paid ? 'Final sale · paid to you' : 'Final sale · payout on its way', detail: 'Not collected, charged as final sale.', net, fee, paid };
   }
   if (net !== undefined) return { tone: 'sold', label: paid ? 'Sold · paid to you' : 'Sold · payout on its way', net, fee, paid };
-  if (o.status === 'failed') return { tone: 'back', label: 'Uncollected · refunded', detail: 'The customer wasn’t charged for this. The robot brings it back to your counter.' };
+  if (o.status === 'failed') return { tone: 'back', label: 'Uncollected · not charged', detail: 'The customer wasn’t charged for this. The robot brings it back to your counter.' };
   if (SOLD.includes(o.status) || o.status === 'voided' || o.status === 'returning') {
     const last = s.decisions.filter((d) => d.order_id === o.id).at(-1);
     const f = (last?.facts as Fact[] | undefined)?.find((x) => x.compartment === c.id);
@@ -148,7 +148,7 @@ export default function Vendor() {
           {menu.map((i) => (
             <li key={i.id}>
               <img src={itemPhoto(i.id, 120)} alt="" />
-              <span className="vd-menu-main"><b>{i.name}</b><small>{$(i.price_cents)}{(pending[i.id] ?? i.final_sale) ? ' · no refund if not collected' : ' · refunded if not collected'}</small></span>
+              <span className="vd-menu-main"><b>{i.name}</b><small>{$(i.price_cents)}{(pending[i.id] ?? i.final_sale) ? ' · charged even if not collected' : ' · not charged if not collected'}</small></span>
               <label className="vd-switch">
                 <input type="checkbox" role="switch" checked={pending[i.id] ?? !!i.final_sale} onChange={(e) => setFinal(i.id, e.target.checked)} />
                 <span>Final sale</span>
@@ -162,7 +162,7 @@ export default function Vendor() {
         <div className="vd-h2"><h2>Earnings</h2></div>
         <div className="vd-kpis">
           <div className="vd-kpi hero"><span>Paid to you</span><b>{$(total('paid_out'))}</b><small>Sent by PayPal Payouts</small></div>
-          <div className="vd-kpi"><span>On its way</span><b>{$(total('payout_pending') - total('paid_out'))}</b><small>Payouts still processing</small></div>
+          <div className="vd-kpi"><span>On its way</span><b>{$(rows.filter((l) => l.kind === 'payout_pending' && !rows.some((x) => x.kind === 'paid_out' && x.order_id === l.order_id)).reduce((t, l) => t + l.amount_cents, 0))}</b><small>Payouts still processing</small></div>
           <div className="vd-kpi"><span>LiftDrop fee</span><b>{$(total('fee'))}</b><small>{me.fee_bps / 100}% of what customers took</small></div>
         </div>
       </section>

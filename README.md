@@ -6,6 +6,10 @@ Built for the PayPal AI Hackathon, 2026.
 
 ![LiftDrop robot](public/landing-robot.webp)
 
+![A live run: the customer took the iced latte and left the croissant, so PayPal captured $9.00, released $4.50 of the $13.50 hold, and paid the café $8.55](docs/images/live-run.jpg)
+
+*A live run in `/demo`: the scale and SAM 3.1 agree compartment B was emptied and A was not, so PayPal captures $9.00 of the $13.50 hold, releases $4.50, and pays the shop $8.55.*
+
 ## The problem
 
 A lot of office workers eat at their desks, and the shops in the lobby lose that lunch to delivery apps that charge them 15–30% and send a courier who can't get past the security gate. LiftDrop keeps the order in the building: the lobby shops sell to the floors above them, and the robot handles the lift and the gate.
@@ -78,6 +82,11 @@ robot heartbeats live in the `robots` table, the payout batch is sent through Ne
 payouts in progress, unclaimed orders and robots stuck at the door are swept on each `/api/state` read.
 Set the variables above in the project settings, including `NEXT_PUBLIC_PAYPAL_CLIENT_ID` before the
 first build (it is baked into the page), and apply `supabase/migrations/*.sql`.
+
+A Vercel Cron job (`vercel.json`) calls `/api/cron/keepalive` once a day. It reads the menu and orders,
+cancels paid orders no robot finished, syncs payouts and clears old robot heartbeats, so the Supabase
+free tier never sees a week without activity and pauses the database. Set `CRON_SECRET` in the project
+settings: Vercel sends it as a bearer token and the route then rejects every other caller.
 
 ## Tests
 
