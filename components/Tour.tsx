@@ -112,7 +112,8 @@ export default function Tour() {
       if (st.at === 'home' && at && at !== 'home') return set({ on: true, step: s!.step + 1 }); // came straight to /demo
       if (st.done?.()) return set({ on: true, step: s!.step + 1 });
       // Somewhere else in the demo: point at the pill that leads back.
-      const sel = at === st.at || st.at === 'home' ? st.el : PILL[st.at];
+      // On the landing page mid-tour (a saved step), the way back in is the live demo button.
+      const sel = at === st.at || st.at === 'home' ? st.el : at === 'home' ? STEPS[0].el : PILL[st.at];
       const el = [...document.querySelectorAll(sel)].find((e) => e.getClientRects().length > 0);
       if (el && scrolled.current !== s!.step && at === st.at) { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); scrolled.current = s!.step; }
       const r = el?.getBoundingClientRect();
@@ -148,7 +149,8 @@ export default function Tour() {
 
   if (!step) return chip;
   const away = here !== step.at && step.at !== 'home';
-  const say = away ? `Switch to ${step.at === 'user' ? 'User' : step.at === 'vendor' ? 'Vendor' : 'Ops'} to carry on.` : step.say;
+  const say = away && here === 'home' ? 'You’re partway through the tour. Open the live demo to carry on, or start over.'
+    : away ? `Switch to ${step.at === 'user' ? 'User' : step.at === 'vendor' ? 'Vendor' : 'Ops'} to carry on.` : step.say;
   const last = s.step === STEPS.length - 1;
   const W = Math.min(290, innerWidth - 32);
   const at = box ? place(box, W, bub.current?.offsetHeight ?? 130) : { left: (innerWidth - W) / 2, top: innerHeight - 200 };
@@ -166,6 +168,7 @@ export default function Tour() {
         <span className="tour-n">{s.step + 1} / {STEPS.length}</span>
         <button className="tour-x" aria-label="End the tour" onClick={() => set({ on: false, step: s.step })}>×</button>
         <p>{say}</p>
+        {away && here === 'home' && <button className="tour-go" onClick={() => set({ on: true, step: 0 })}>Start over</button>}
         {!away && !step.done && <button className="tour-go" onClick={() => set({ on: !last, step: last ? STEPS.length : s.step + 1 })}>{last ? 'Finish' : 'Next'}</button>}
       </div>
     </>
