@@ -1,6 +1,7 @@
 // Order state machine and money flow. The only place order status changes.
 
 import { randomInt, timingSafeEqual } from 'node:crypto';
+import { after } from 'next/server.js'; // .js: plain Node (tests) resolves the file, not the package export
 import * as db from './db.ts';
 import type { Compartment, Order, OrderStatus } from './db.ts';
 import * as paypal from './paypal.ts';
@@ -262,7 +263,8 @@ async function fail(id: string, e: unknown) {
   if (NEXT[fresh.status].includes('failed')) await move(fresh, 'failed');
 }
 
-// ponytail: background work lives in this process (single Render instance), like the payout poller.
+// The payout batch is sent after the reply. On serverless (Vercel) the function would be frozen
+// once the response is sent, so the job is handed to Next's after(), which keeps it alive.
 const payoutJobs = new Map<string, Promise<void>>();
 /** Resolves once the payout batch for this order has been sent (or failed). For tests and scripts. */
 export const payoutSent = (orderId: string) => payoutJobs.get(orderId) ?? Promise.resolve();
@@ -273,6 +275,12 @@ function startPayout(order: Order, d: Pick<Applied, 'charge_compartments' | 'kep
     .catch((e) => { console.error(`payout ${order.id}:`, e); return fail(order.id, e); })
     .finally(() => payoutJobs.delete(order.id));
   payoutJobs.set(order.id, job);
+  keepAlive(job);
+}
+
+/** Outside a request (tests, scripts, boot) there is no after(); the promise just runs. */
+function keepAlive(p: Promise<unknown>) {
+  try { after(() => p); } catch { /* not in a request scope */ }
 }
 
 export function splitPayouts(comps: { shop_id: string; value_cents: number }[], shops: db.Shop[]) {
@@ -344,8 +352,8 @@ export async function syncPayout(orderId: string) {
   return move(order, 'paid_out');
 }
 
-// ponytail: in-process poller (single Render instance). Orders left in paying_out by a restart
-// are picked up by syncPendingPayouts() on the next /api/state read.
+// In-process poller: moves a payout along fast on a long-running server. On serverless its timers
+// stop with the request; syncPendingPayouts() on each /api/state read covers that.
 const watching = new Set<string>();
 export function watchPayout(orderId: string, everyMs = 3000, maxTries = 60) {
   if (watching.has(orderId)) return;
@@ -385,6 +393,19 @@ export async function expireUnclaimed(now = Date.now(), force = false) {
     } finally {
       settling.delete(o.id);
     }
+  }
+  await sweepDoors(now);
+}
+
+/** watchDoor's timer, as a sweep for serverless: settle orders that have waited at the door too long. */
+async function sweepDoors(now: number) {
+  const waiting = await db.listOrdersByStatus('at_door');
+  if (!waiting.length) return;
+  const arrived = await db.listEvents(waiting.map((o) => o.id), ['arrived']);
+  for (const o of waiting) {
+    const at = Math.max(...arrived.filter((e) => e.order_id === o.id).map((e) => Date.parse(e.at)));
+    if (!Number.isFinite(at) || now - at < DOOR_BACKSTOP_MS || now - at > 3_600_000) continue; // >1 h: left by an old demo run
+    await handleEvent(o.id, { type: 'timeout' }).catch((e) => console.error(`door sweep ${o.id}:`, e));
   }
 }
 
@@ -458,6 +479,12 @@ export async function opsResolve(orderId: string, note = '') {
   return { ok: true };
 }
 
-export async function syncPendingPayouts() {
-  for (const o of await db.listOrdersByStatus('paying_out')) watchPayout(o.id);
+/** Polled from /api/state: checks every batch still being paid, at most every 3 s per instance.
+ *  This is what moves payouts on serverless, where watchPayout's timers don't survive the reply. */
+let lastPayoutSync = 0;
+export async function syncPendingPayouts(now = Date.now()) {
+  if (now - lastPayoutSync < 3000) return;
+  lastPayoutSync = now;
+  await Promise.all((await db.listOrdersByStatus('paying_out'))
+    .map((o) => syncPayout(o.id).catch((e) => console.error(`payout sync ${o.id}:`, e))));
 }

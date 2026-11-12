@@ -92,6 +92,7 @@ const nextId = () => ++db().seq;
 export function resetDb() {
   if (sb) throw new Error('reset is mock-only');
   g.__liftdrop = seed();
+  mockRobots().clear();
 }
 
 export async function listShops() {
@@ -247,6 +248,35 @@ export async function listDecisions(orderId?: string) {
 }
 
 /** Everything the consoles need, for the 20 most recent orders. */
+// ---------- robots (fleet heartbeats) ----------
+export type RobotRow = { session: string; n: number; beat: Record<string, unknown>; first: number; last: number };
+const mockRobots = () => ((g as { __liftdropRobots?: Map<string, RobotRow> }).__liftdropRobots ??= new Map());
+
+/** Upsert a heartbeat; returns the robot's number (stable across beats). */
+export async function upsertRobot(session: string, beat: Record<string, unknown>, at = Date.now()): Promise<number> {
+  if (sb) {
+    const rows = await q<{ n: number }[]>(sb.from('robots')
+      .upsert({ session, beat, last_at: new Date(at).toISOString() }, { onConflict: 'session' }).select('n'));
+    return rows[0].n;
+  }
+  const m = mockRobots(), prev = m.get(session);
+  const n = prev?.n ?? Math.max(0, ...[...m.values()].map((r) => r.n)) + 1;
+  m.set(session, { session, n, beat, first: prev?.first ?? at, last: at });
+  return n;
+}
+export async function listRobots(): Promise<RobotRow[]> {
+  if (sb) {
+    const rows = await q<{ session: string; n: number; beat: Record<string, unknown>; first_at: string; last_at: string }[]>(
+      sb.from('robots').select().order('last_at', { ascending: false }).limit(50));
+    return rows.map((r) => ({ session: r.session, n: r.n, beat: r.beat, first: Date.parse(r.first_at), last: Date.parse(r.last_at) }));
+  }
+  return [...mockRobots().values()];
+}
+export async function deleteRobotsBefore(at: number) {
+  if (sb) return void await q(sb.from('robots').delete().lt('last_at', new Date(at).toISOString()));
+  for (const r of mockRobots().values()) if (r.last < at) mockRobots().delete(r.session);
+}
+
 export async function snapshot() {
   const [shops, items, orders] = await Promise.all([listShops(), listItems(), listOrders()]);
   const ids = new Set(orders.map((o) => o.id));

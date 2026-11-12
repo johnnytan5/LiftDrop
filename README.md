@@ -67,15 +67,23 @@ With an empty `.env` everything runs on mocks: PayPal is simulated, the database
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` (or `OPENROUTER_API_KEY`) | LLM handoff agent |
 | `META_API_KEY` | Muse Spark for the phone call, SAM 3.1 for the cameras |
 | `ASSEMBLYAI_API_KEY` | Speech-to-text and text-to-speech for the phone call |
-| `OPS_TOKEN` | Locks `/api/ops`. Required in production. |
+| `OPS_TOKEN` | Optional: locks the operator actions on `/api/ops` (sent as `x-ops-token`). |
 | `SANDBOX_BUYERS` | PayPal sandbox buyer logins (`email password, email password`) shown under the demo phone with copy buttons, sandbox mode only |
 | `TOUR=on` | Guided tour over `/` and `/demo`: first-time visitors are asked once, and a corner switch turns it on or off. Any other value hides it completely. |
+
+## Deploy
+
+Runs on Vercel as is (or any Node host with `npm run build && npm start`). No server memory is relied on:
+robot heartbeats live in the `robots` table, the payout batch is sent through Next's `after()`, and
+payouts in progress, unclaimed orders and robots stuck at the door are swept on each `/api/state` read.
+Set the variables above in the project settings, including `NEXT_PUBLIC_PAYPAL_CLIENT_ID` before the
+first build (it is baked into the page), and apply `supabase/migrations/*.sql`.
 
 ## Tests
 
 ```bash
 npm run typecheck
-npm run check        # unit tests: order lifecycle, handoff decisions, refunds, sim, call tools
+npm run check        # unit tests: order lifecycle, handoff decisions, camera checks, fleet, ops, sim, call tools
 npm run e2e          # browser run of the full demo; start the server with PAYPAL_MODE=mock first
 ```
 

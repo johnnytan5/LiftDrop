@@ -12,7 +12,7 @@ export async function GET() {
   return respond(async () => {
     const s = await db.snapshot();
     const events = await db.listEvents(s.orders.map((o) => o.id), ['error', 'ops']);
-    const robots = fleet();
+    const robots = await fleet();
     return { robots, escalations: escalations(s, events, robots), orders: s.orders, compartments: s.compartments, ledger: s.ledger, shops: s.shops, ops: events.filter((e) => e.type === 'ops') };
   });
 }
